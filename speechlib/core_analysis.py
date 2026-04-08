@@ -112,6 +112,9 @@ def _publish_domain_artifacts(
             transcript,
             max_clips_per_speaker=5,
             min_clip_duration_ms=2000,
+            # Slice 17: threshold permisivo para no identificados — visibilidad
+            # en por_nombrar/ aunque los clips sean cortos.
+            min_unidentified_clip_duration_ms=500,
         )
         if plans:
             extract_speaker_samples(

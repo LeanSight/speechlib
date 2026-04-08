@@ -71,14 +71,20 @@ def plan_speaker_samples(
     transcript: Transcript,
     max_clips_per_speaker: int,
     min_clip_duration_ms: int,
+    min_unidentified_clip_duration_ms: Optional[int] = None,
 ) -> tuple[SpeakerSamplePlan, ...]:
     """Construye los planes de extraccion para todos los speakers del transcript.
 
     Args:
         transcript: aggregate del que se extraen los segmentos.
         max_clips_per_speaker: cap del top-N por speaker. Si <=0, retorna ().
-        min_clip_duration_ms: duracion minima por clip; los que no llegan
-            quedan filtrados.
+        min_clip_duration_ms: duracion minima por clip para identificados.
+            Garantiza calidad de los samples de verificacion.
+        min_unidentified_clip_duration_ms: duracion minima por clip para
+            speakers NO identificados (los que van a por_nombrar/). Default
+            None = usa el mismo threshold que identificados (backward compat).
+            Pasar un valor menor (ej. 500) le da visibilidad a speakers con
+            audio escaso para que el usuario pueda al menos saber que existen.
 
     Returns:
         Tuple de planes ordenado: identificados primero (alfabetico) y luego
@@ -87,6 +93,9 @@ def plan_speaker_samples(
     """
     if max_clips_per_speaker <= 0:
         return ()
+
+    if min_unidentified_clip_duration_ms is None:
+        min_unidentified_clip_duration_ms = min_clip_duration_ms
 
     # Agrupar segmentos por label (no por tag): identificados con el mismo
     # nombre colapsan, no identificados quedan separados por SPEAKER_XX.
@@ -101,12 +110,17 @@ def plan_speaker_samples(
 
     plans: list[SpeakerSamplePlan] = []
     for label, segments in grouped.items():
+        is_identified = identified_label[label]
+        threshold = (
+            min_clip_duration_ms if is_identified
+            else min_unidentified_clip_duration_ms
+        )
         plan = _build_plan_for_speaker(
             label=label,
-            is_identified=identified_label[label],
+            is_identified=is_identified,
             segments=segments,
             max_clips=max_clips_per_speaker,
-            min_duration_ms=min_clip_duration_ms,
+            min_duration_ms=threshold,
         )
         if plan is not None:
             plans.append(plan)
