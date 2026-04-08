@@ -12,7 +12,8 @@ from .diarization import get_diarization_pipeline
 
 logger = logging.getLogger(__name__)
 
-SPEAKER_SIMILARITY_THRESHOLD = 0.40
+SPEAKER_SIMILARITY_THRESHOLD = 0.45
+SPEAKER_SIMILARITY_MIN_MARGIN = 0.10
 VOICES_SKIP_PREFIX = "_"
 _SPEAKER_TAG_RE = re.compile(r"^SPEAKER_\d+$")
 

@@ -35,21 +35,33 @@ def _best_match(
     embedding: np.ndarray,
     voice_library: dict[str, np.ndarray],
     threshold: float,
+    min_margin: float = 0.0,
 ) -> tuple[Optional[str], Optional[float]]:
     """Devuelve (name, similarity) del mejor match, o (None, best_similarity)
-    si ningun voice supera el threshold. None es la senal de 'no identificado',
-    NO el string 'unknown'."""
-    best_name: Optional[str] = None
-    best_score = -1.0
+    si ningun voice supera el threshold O si el margen top1 vs top2 es
+    inferior a min_margin (match ambiguo). None es la senal de 'no
+    identificado', NO el string 'unknown'."""
+    scores: list[tuple[str, float]] = []
     for name, voice_emb in voice_library.items():
-        score = _cosine_similarity(embedding, voice_emb)
-        if score > best_score:
-            best_score = score
-            best_name = name
-    if best_name is None:
+        scores.append((name, _cosine_similarity(embedding, voice_emb)))
+    if not scores:
         return None, None  # libreria vacia
+
+    scores.sort(key=lambda kv: -kv[1])
+    best_name, best_score = scores[0]
+
     if best_score < threshold:
         return None, best_score
+
+    # Slice 9: rechazar matches ambiguos donde top1 no supera a top2 por
+    # min_margin. Evita false positives en library con voces de calidad
+    # heterogenea cuando ningun PRESENTE real esta cerca y el matcher elige
+    # al "menos diferente" entre los AUSENTES.
+    if min_margin > 0.0 and len(scores) >= 2:
+        second_score = scores[1][1]
+        if (best_score - second_score) < min_margin:
+            return None, best_score
+
     return best_name, best_score
 
 
@@ -58,6 +70,7 @@ def assign_speakers(
     embeddings_by_tag: dict[str, np.ndarray],
     voice_library: dict[str, np.ndarray],
     threshold: float,
+    min_margin: float = 0.0,
 ) -> Transcript:
     """Asigna identidades de speaker a cada segmento del transcript.
 
@@ -65,6 +78,12 @@ def assign_speakers(
     - Si tiene embedding en embeddings_by_tag, se compara contra voice_library.
       El resultado (con o sin match) se aplica a TODOS los segmentos del tag.
     - Si NO tiene embedding, los segmentos de ese tag quedan intactos.
+
+    Args:
+        threshold: minimo de cosine similarity para identificar.
+        min_margin: minimo de diferencia top1 - top2 para no considerar el
+            match ambiguo. Default 0.0 = no se aplica filtro de margen
+            (backward compatible).
 
     Retorna un Transcript nuevo. La entrada no se mutua.
     """
@@ -77,7 +96,9 @@ def assign_speakers(
         if embedding is None:
             new_identity_by_tag[tag] = None
             continue
-        name, similarity = _best_match(embedding, voice_library, threshold)
+        name, similarity = _best_match(
+            embedding, voice_library, threshold, min_margin=min_margin
+        )
         new_identity_by_tag[tag] = SpeakerIdentity(
             diarization_tag=tag,
             recognized_name=name,

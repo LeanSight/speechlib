@@ -2,9 +2,17 @@
 import numpy as np
 
 
-def test_constant_value_is_040():
+def test_constant_value_is_045():
+    """Slice 9: subido de 0.40 a 0.45 para reducir false positives en
+    voice libraries con calidad heterogenea."""
     from speechlib.speaker_recognition import SPEAKER_SIMILARITY_THRESHOLD
-    assert SPEAKER_SIMILARITY_THRESHOLD == 0.40
+    assert SPEAKER_SIMILARITY_THRESHOLD == 0.45
+
+
+def test_min_margin_constant_exists():
+    """Slice 9: agrega constante para el margen minimo top1 vs top2."""
+    from speechlib.speaker_recognition import SPEAKER_SIMILARITY_MIN_MARGIN
+    assert SPEAKER_SIMILARITY_MIN_MARGIN == 0.10
 
 
 def test_find_best_speaker_default_uses_constant():
