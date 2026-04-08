@@ -19,7 +19,6 @@ from .speaker_recognition import (
     SPEAKER_SIMILARITY_THRESHOLD,
     _get_inference,
     load_avg_voice_embeddings,
-    speaker_recognition,
 )
 from .audio_utils import slice_and_save
 from .domain.recognition import assign_speakers

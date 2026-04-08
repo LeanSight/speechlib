@@ -1,13 +1,24 @@
+"""
+Voice library loading + embedding extraction.
+
+Slice 15: las funciones legacy speaker_recognition(), find_best_speaker(),
+detect_unknown_speakers() fueron eliminadas. La logica de matching vive
+ahora en speechlib.domain.recognition.assign_speakers (funcion pura).
+
+Lo que sobrevive aqui es solo I/O:
+- _get_inference() / get_embedding() — wrappers de pyannote/embedding
+- cosine_similarity() — usado por tools/diagnose_speaker y tools/enroll_speaker
+- load_voice_embeddings() / load_avg_voice_embeddings() — cargan la library
+- Constantes: SPEAKER_SIMILARITY_THRESHOLD, MIN_MARGIN, MIN_SEGMENT_DURATION_S
+"""
+
 import logging
 import os
 from pathlib import Path
-from typing import Union
 import numpy as np
 from pyannote.audio import Model, Inference
 from scipy.spatial.distance import cosine
 import torch
-from .audio_utils import slice_and_save
-from .diarization import get_diarization_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -43,31 +54,6 @@ def cosine_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
     emb1 = np.asarray(emb1).flatten()
     emb2 = np.asarray(emb2).flatten()
     return 1.0 - cosine(emb1, emb2)
-
-
-def find_best_speaker(
-    test_embedding: np.ndarray,
-    speaker_embeddings: dict[str, np.ndarray],
-    threshold: float = SPEAKER_SIMILARITY_THRESHOLD,
-) -> str:
-    best_speaker = "unknown"
-    best_score = -1.0
-
-    scores = {}
-    for speaker, emb in speaker_embeddings.items():
-        score = cosine_similarity(test_embedding, emb)
-        scores[speaker] = score
-        if score > best_score:
-            best_score = score
-            best_speaker = speaker
-
-    logger.debug(
-        "Speaker scores: %s  best=%.3f threshold=%.2f", scores, best_score, threshold
-    )
-
-    if best_score < threshold:
-        return "unknown"
-    return best_speaker
 
 
 def load_voice_embeddings(
@@ -114,120 +100,3 @@ def load_avg_voice_embeddings(
     return {name: np.mean(embs, axis=0) for name, embs in raw.items()}
 
 
-def speaker_recognition(
-    file_name,
-    voices_folder,
-    segments,
-    threshold: float = SPEAKER_SIMILARITY_THRESHOLD,
-    enhanced: bool = False,
-):
-    inference = _get_inference()
-
-    speaker_embeddings = load_avg_voice_embeddings(Path(voices_folder), enhanced=enhanced)
-
-    folder_name = str(Path(file_name).parent / "tmp")
-
-    if not os.path.exists(folder_name):
-        os.makedirs(folder_name)
-
-    limit = 60_000  # 60 segundos expresado en ms
-    duration = 0
-    collected_embeddings = []
-
-    for i, segment in enumerate(segments, 1):
-        start_ms = segment[0] * 1000
-        end_ms = segment[1] * 1000
-
-        # Slice 12: filtrar turnos muy cortos antes de cortar el audio.
-        # pyannote/embedding rompe con max_pool1d() en chunks < ~0.5s.
-        if (end_ms - start_ms) < MIN_SEGMENT_DURATION_S * 1000:
-            continue
-
-        file = (
-            folder_name
-            + "/"
-            + os.path.splitext(os.path.basename(file_name))[0]
-            + "_segment"
-            + str(i)
-            + ".wav"
-        )
-        slice_and_save(file_name, start_ms, end_ms, file)
-
-        try:
-            emb = inference(file)
-            emb_arr = np.asarray(emb).flatten()
-            if not np.isnan(emb_arr).any():
-                collected_embeddings.append(emb_arr)
-        except Exception as e:
-            print(f"Error extracting embedding from segment: {e}")
-            try:
-                os.remove(file)
-            except OSError:
-                pass
-            continue
-
-        os.remove(file)
-
-        duration += end_ms - start_ms
-        if duration >= limit:
-            break
-
-    if not collected_embeddings:
-        return "unknown"
-
-    avg_emb = np.mean(collected_embeddings, axis=0)
-    return find_best_speaker(avg_emb, speaker_embeddings, threshold)
-
-
-def detect_unknown_speakers(
-    audio_path: Union[str, Path],
-    voices_folder: Union[str, Path],
-    hf_token: str | None = None,
-    threshold: float = SPEAKER_SIMILARITY_THRESHOLD,
-    limit_s: float = 60.0,
-) -> dict[str, list[list[float]]]:
-    """Diariza el audio y retorna segmentos de speakers no reconocidos en voices_folder.
-
-    Args:
-        audio_path: WAV procesado (enhanced/16k).
-        voices_folder: Carpeta con subdirectorios por speaker conocido.
-        hf_token: Token HuggingFace para cargar el pipeline de diarización.
-        threshold: Umbral de cosine similarity para considerar a un speaker conocido.
-        limit_s: Segundos máximos de audio a analizar por speaker (rendimiento).
-
-    Returns:
-        {speaker_tag: [[start_s, end_s], ...]} — solo speakers no reconocidos.
-        Los tags son los SPEAKER_XX asignados por pyannote.
-    """
-    pipeline = get_diarization_pipeline(hf_token)
-
-    import torchaudio
-
-    waveform, sample_rate = torchaudio.load(str(audio_path))
-    diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate})
-
-    annotation = (
-        diarization.speaker_diarization
-        if hasattr(diarization, "speaker_diarization")
-        else diarization
-    )
-
-    # Construir dict de segmentos por speaker_tag
-    speakers: dict[str, list[list[float]]] = {}
-    for turn, _, spk_tag in annotation.itertracks(yield_label=True):
-        start = round(turn.start, 1)
-        end = round(turn.end, 1)
-        if spk_tag not in speakers:
-            speakers[spk_tag] = []
-        speakers[spk_tag].append([start, end, spk_tag])
-
-    # Identificar cada speaker contra la voices library
-    result: dict[str, list[list[float]]] = {}
-    for spk_tag, segments in speakers.items():
-        name = speaker_recognition(
-            str(audio_path), str(voices_folder), segments, threshold
-        )
-        if name == "unknown":
-            result[spk_tag] = [[s[0], s[1]] for s in segments]
-
-    return result

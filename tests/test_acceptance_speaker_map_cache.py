@@ -119,8 +119,11 @@ class TestSpeakerMapCache:
             f"load_avg_voice_embeddings should receive enhanced=True, got {mock_load_lib.call_args}"
         )
 
-    def test_speaker_map_cache_skips_recognition(self, tmp_path):
-        """speaker_map.json exists → speaker_recognition NOT called"""
+    def test_speaker_map_cache_skips_embeddings_computation(self, tmp_path):
+        """Slice 15: speaker_map.json exists → no se computan embeddings nuevos.
+
+        En el flujo nuevo (Slice 13b), el cache evita llamar
+        _compute_averaged_embeddings_per_tag y assign_speakers."""
         from speechlib.core_analysis import core_analysis
 
         audio = _make_wav(tmp_path / "audio.wav", duration_s=10.0)
@@ -142,16 +145,20 @@ class TestSpeakerMapCache:
 
         mock_annotation = _make_annotation_mock(["SPEAKER_00"])
         mock_rttm = MagicMock(return_value={"test": mock_annotation})
-        mock_speaker_rec = MagicMock(return_value="speaker")
+        mock_compute = MagicMock(return_value={})
 
         with patch("speechlib.core_analysis._load_rttm", mock_rttm):
-            with patch("speechlib.core_analysis.speaker_recognition", mock_speaker_rec):
+            with patch(
+                "speechlib.core_analysis._compute_averaged_embeddings_per_tag",
+                mock_compute,
+            ):
                 core_analysis(str(audio), str(voices), str(tmp_path / "logs"), "en")
 
-        mock_speaker_rec.assert_not_called()
+        mock_compute.assert_not_called()
 
-    def test_speaker_map_cache_skips_diarization_and_recognition(self, tmp_path):
-        """diarization.rttm + speaker_map.json exist → neither pipeline nor speaker_recognition called"""
+    def test_speaker_map_cache_skips_diarization_and_embeddings(self, tmp_path):
+        """diarization.rttm + speaker_map.json exist → neither pipeline ni
+        embedding computation se invocan."""
         from speechlib.core_analysis import core_analysis
 
         audio = _make_wav(tmp_path / "audio.wav", duration_s=10.0)
@@ -174,19 +181,20 @@ class TestSpeakerMapCache:
         mock_annotation = _make_annotation_mock(["SPEAKER_00"])
         mock_rttm = MagicMock(return_value={"test": mock_annotation})
         mock_pipeline = MagicMock()
-        mock_speaker_rec = MagicMock(return_value="speaker")
+        mock_compute = MagicMock(return_value={})
 
         with patch("speechlib.core_analysis._load_rttm", mock_rttm):
             with patch(
                 "speechlib.core_analysis._get_diarization_pipeline", mock_pipeline
             ):
                 with patch(
-                    "speechlib.core_analysis.speaker_recognition", mock_speaker_rec
+                    "speechlib.core_analysis._compute_averaged_embeddings_per_tag",
+                    mock_compute,
                 ):
                     core_analysis(str(audio), str(voices), str(tmp_path / "logs"), "en")
 
         mock_pipeline.assert_not_called()
-        mock_speaker_rec.assert_not_called()
+        mock_compute.assert_not_called()
 
     def test_speaker_map_json_format(self, tmp_path):
         """Slice 13b: JSON tiene SPEAKER_XX como valor cuando ningun voice
