@@ -39,6 +39,52 @@ from .enhance_audio import enhance_audio
 from .compress_audio import compress_audio
 
 
+def _run_speaker_recognition_cached(
+    state: AudioState,
+    voices_folder: str,
+    speakers: dict,
+    speaker_tags: list,
+) -> dict:
+    """Identifica cada SPEAKER_XX contra la libreria de voces, con cache.
+
+    Si artifacts_dir/speaker_map.json existe, lo carga. Si no, corre
+    speaker_recognition() por cada tag y guarda el cache.
+
+    Aplica el hack historico (raiz del bug original): cuando el reconocimiento
+    devuelve "unknown", lo reescribe al SPEAKER_XX para que el VTT writer no
+    muestre el literal. Slice 13b lo eliminara cuando core_analysis use
+    assign_speakers directo.
+    """
+    speaker_map_path = state.artifacts_dir / "speaker_map.json"
+
+    if speaker_map_path.exists():
+        speaker_map = json.loads(speaker_map_path.read_text(encoding="utf-8"))
+        print("speaker_map loaded from cache.")
+        return speaker_map
+
+    speaker_map: dict = {}
+    start_time = int(time.time())
+    print("running speaker recognition...")
+    for spk_tag, spk_segments in speakers.items():
+        spk_name = speaker_recognition(
+            str(state.working_path), voices_folder, spk_segments,
+            enhanced=state.is_enhanced,
+        )
+        speaker_map[spk_tag] = spk_name
+    elapsed = int(time.time() - start_time)
+    print(f"speaker recognition done. Time taken: {elapsed} seconds.")
+
+    # Hack historico: "unknown" -> tag pyannote para que el VTT no muestre literal
+    for spk_tag in speaker_tags:
+        if speaker_map.get(spk_tag) == "unknown":
+            speaker_map[spk_tag] = spk_tag
+
+    speaker_map_path.write_text(
+        json.dumps(speaker_map, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return speaker_map
+
+
 def _build_speaker_groups(annotation):
     """Itera la annotation pyannote y construye las tres estructuras paralelas
     que el resto del flujo legacy consume.
@@ -178,35 +224,9 @@ def core_analysis(
 
     has_voices_folder = voices_folder is not None and voices_folder != ""
     if has_voices_folder:
-        speaker_map_path = state.artifacts_dir / "speaker_map.json"
-
-        if speaker_map_path.exists():
-            speaker_map = json.loads(speaker_map_path.read_text(encoding="utf-8"))
-            print("speaker_map loaded from cache.")
-        else:
-            identified = []
-
-            start_time = int(time.time())
-            print("running speaker recognition...")
-            for spk_tag, spk_segments in speakers.items():
-                spk_name = speaker_recognition(
-                    str(state.working_path), voices_folder, spk_segments,
-                    enhanced=state.is_enhanced,
-                )
-                spk = spk_name
-                identified.append(spk)
-                speaker_map[spk_tag] = spk
-            end_time = int(time.time())
-            elapsed_time = int(end_time - start_time)
-            print(f"speaker recognition done. Time taken: {elapsed_time} seconds.")
-
-            for spk_tag in speaker_tags:
-                if speaker_map.get(spk_tag) == "unknown":
-                    speaker_map[spk_tag] = spk_tag
-
-            speaker_map_path.write_text(
-                json.dumps(speaker_map, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+        speaker_map = _run_speaker_recognition_cached(
+            state, voices_folder, speakers, speaker_tags
+        )
 
     keys_to_remove = []
     merged = []
