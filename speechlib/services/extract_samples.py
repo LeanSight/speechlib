@@ -18,6 +18,14 @@ from ..audio_utils import slice_and_save
 from ..domain.sample_extraction import SpeakerSamplePlan
 
 
+def _destination_dir_for_plan(plan: SpeakerSamplePlan, output_dir: Path) -> Path:
+    """Devuelve el directorio destino para los clips de un plan.
+
+    Funcion pura: solo depende del plan y del output_dir base.
+    """
+    return output_dir / plan.speaker_label
+
+
 def extract_speaker_samples(
     plans: tuple[SpeakerSamplePlan, ...],
     audio_path: Path,
@@ -38,7 +46,7 @@ def extract_speaker_samples(
     written: dict[str, list[Path]] = {}
 
     for plan in plans:
-        speaker_dir = output_dir / plan.speaker_label
+        speaker_dir = _destination_dir_for_plan(plan, output_dir)
         speaker_dir.mkdir(parents=True, exist_ok=True)
         paths: list[Path] = []
         for i, clip in enumerate(plan.clips, start=1):
