@@ -1,18 +1,26 @@
 """
-Slice 10 AT: relabel_vtt --all-speakers re-evalúa todos los bloques, no solo [unknown].
+Slice 10 tests: relabel_vtt como CLI delgado sobre el dominio.
+
+Tests focalizados en las helpers puras + el flujo via CLI con audio sintetico
+en tmp_path. Sin mocks profundos: el dominio puro ya esta probado en
+test_acceptance_assign_speakers.py / test_domain_recognition.py.
+
+Cubre el invariante anti-bug: re-evaluacion fallida JAMAS sobreescribe
+con literal "[unknown]".
 """
+
 import textwrap
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import numpy as np
 import torch
 import torchaudio
 
 
-def _make_wav(path: Path, duration_s: float = 2.0, sr: int = 16000) -> Path:
+def _make_wav(path: Path, duration_s: float = 5.0, sr: int = 16000) -> Path:
     n = int(duration_s * sr)
-    torchaudio.save(str(path), torch.zeros(1, n), sr, bits_per_sample=16)
+    torchaudio.save(str(path), 0.1 * torch.randn(1, n), sr, bits_per_sample=16)
     return path
 
 
@@ -21,190 +29,278 @@ def _write_vtt(path: Path, content: str) -> Path:
     return path
 
 
-def _run_relabel(vtt_path, audio_path, voices_folder, extra_args=""):
-    """Invoca relabel_vtt.main() con los args dados."""
-    import sys
-    from speechlib.tools import relabel_vtt as m
-
-    argv = [
-        "relabel_vtt",
-        str(vtt_path),
-        str(audio_path),
-        str(voices_folder),
-    ] + (extra_args.split() if extra_args else [])
-
-    with patch.object(sys, "argv", argv):
-        m.main()
+# ── Pure helpers ──────────────────────────────────────────────────────────────
 
 
-# ── Comportamiento existente preservado (regresión) ─────────────────────────
+class TestBuildTranscriptFromVttBlocks:
+    def test_unidentified_speaker_xx_label(self):
+        from speechlib.tools.relabel_vtt import build_transcript_from_vtt_blocks
+        from speechlib.vtt_utils import VttBlock
 
-def test_relabel_vtt_without_flag_only_processes_unknown_blocks(tmp_path):
-    """Sin --all-speakers, solo se procesan bloques [unknown] (regresión)."""
-    vtt = _write_vtt(
-        tmp_path / "test.vtt",
-        """\
-        WEBVTT
+        blocks = [
+            VttBlock(
+                index="1",
+                start_ms=0, end_ms=2000,
+                speaker="SPEAKER_03", text="hola",
+                raw_timestamp="00:00:00.000 --> 00:00:02.000",
+            ),
+        ]
+        t = build_transcript_from_vtt_blocks(blocks, "x.wav", "es")
 
-        1
-        00:00:00.000 --> 00:00:02.000
-        [Agustin] Hola mundo
+        assert len(t.segments) == 1
+        spk = t.segments[0].speaker
+        assert spk.diarization_tag == "SPEAKER_03"
+        assert spk.recognized_name is None
+        assert spk.label == "SPEAKER_03"
 
-        2
-        00:00:02.000 --> 00:00:04.000
-        [unknown] Texto desconocido
-        """,
-    )
-    audio = _make_wav(tmp_path / "audio.wav", duration_s=5.0)
-    voices_folder = tmp_path / "voices"
-    voices_folder.mkdir()
+    def test_identified_name_label(self):
+        from speechlib.tools.relabel_vtt import build_transcript_from_vtt_blocks
+        from speechlib.vtt_utils import VttBlock
 
-    fake_emb = np.ones(192)
-    embs = {"Agustin": fake_emb, "Juan": fake_emb}
+        blocks = [
+            VttBlock(
+                index="1",
+                start_ms=0, end_ms=2000,
+                speaker="Manuel Olguin", text="hola",
+                raw_timestamp="00:00:00.000 --> 00:00:02.000",
+            ),
+        ]
+        t = build_transcript_from_vtt_blocks(blocks, "x.wav", "es")
 
-    processed_blocks = []
+        spk = t.segments[0].speaker
+        assert spk.diarization_tag == "Manuel Olguin"
+        assert spk.recognized_name == "Manuel Olguin"
+        assert spk.label == "Manuel Olguin"
 
-    def fake_get_embedding(path):
-        processed_blocks.append(path)
-        return fake_emb
+    def test_unknown_literal_treated_as_unidentified(self):
+        from speechlib.tools.relabel_vtt import build_transcript_from_vtt_blocks
+        from speechlib.vtt_utils import VttBlock
 
-    def fake_find_best(emb, embs, threshold):
-        return "Juan"
+        blocks = [
+            VttBlock(
+                index="1",
+                start_ms=0, end_ms=2000,
+                speaker="unknown", text="hola",
+                raw_timestamp="00:00:00.000 --> 00:00:02.000",
+            ),
+        ]
+        t = build_transcript_from_vtt_blocks(blocks, "x.wav", "es")
 
-    with (
-        patch("speechlib.tools.relabel_vtt.load_avg_voice_embeddings", return_value=embs),
-        patch("speechlib.tools.relabel_vtt.get_embedding", side_effect=fake_get_embedding),
-        patch("speechlib.tools.relabel_vtt.find_best_speaker", side_effect=fake_find_best),
-        patch("speechlib.tools.relabel_vtt.slice_and_save"),
-    ):
-        _run_relabel(vtt, audio, voices_folder)
-
-    # Solo se procesó 1 bloque (el [unknown]), no el [Agustin]
-    assert len(processed_blocks) == 1
-
-    out = vtt.with_stem(vtt.stem + "_relabeled")
-    content = out.read_text(encoding="utf-8")
-    assert "[Agustin]" in content   # bloque Agustin intacto
-    assert "[unknown]" not in content  # unknown fue relabeled
-
-
-# ── Con --all-speakers: se procesan todos los bloques ───────────────────────
-
-def test_relabel_vtt_all_speakers_processes_every_block(tmp_path):
-    """Con --all-speakers, se calcula embedding para cada bloque del VTT."""
-    vtt = _write_vtt(
-        tmp_path / "test.vtt",
-        """\
-        WEBVTT
-
-        1
-        00:00:00.000 --> 00:00:02.000
-        [Agustin] Hola mundo
-
-        2
-        00:00:02.000 --> 00:00:04.000
-        [Manuel] Otra cosa
-        """,
-    )
-    audio = _make_wav(tmp_path / "audio.wav", duration_s=5.0)
-    voices_folder = tmp_path / "voices"
-    voices_folder.mkdir()
-
-    fake_emb = np.ones(192)
-    embs = {"Agustin": fake_emb, "Manuel": fake_emb}
-    processed_blocks = []
-
-    def fake_get_embedding(path):
-        processed_blocks.append(path)
-        return fake_emb
-
-    with (
-        patch("speechlib.tools.relabel_vtt.load_avg_voice_embeddings", return_value=embs),
-        patch("speechlib.tools.relabel_vtt.get_embedding", side_effect=fake_get_embedding),
-        patch("speechlib.tools.relabel_vtt.find_best_speaker", return_value="Agustin"),
-        patch("speechlib.tools.relabel_vtt.slice_and_save"),
-    ):
-        _run_relabel(vtt, audio, voices_folder, "--all-speakers")
-
-    # Se procesaron los 2 bloques
-    assert len(processed_blocks) == 2
+        spk = t.segments[0].speaker
+        assert spk.recognized_name is None
 
 
-def test_relabel_vtt_all_speakers_preserves_label_when_reeval_fails(tmp_path):
-    """Slice 7 fix: cuando find_best_speaker devuelve 'unknown' (re-evaluacion
-    no supera threshold), el bloque CONSERVA su label existente — jamas se
-    sobreescribe con el literal 'unknown'.
+class TestApplyTranscriptLabelsToBlocks:
+    def test_applies_new_labels_returns_changed_count(self):
+        from speechlib.domain.transcript import (
+            SpeakerIdentity,
+            Transcript,
+            TranscriptSegment,
+        )
+        from speechlib.tools.relabel_vtt import apply_transcript_labels_to_blocks
+        from speechlib.vtt_utils import VttBlock
 
-    Este test ENCODE la nueva politica anti-bug. Antes el codigo escribia
-    [unknown] sobre bloques que ya tenian identidad valida, perdiendo info.
-    Ahora preserva el label existente como ultima fuente confiable."""
-    vtt = _write_vtt(
-        tmp_path / "test.vtt",
-        """\
-        WEBVTT
+        blocks = [
+            VttBlock(
+                index="1",
+                start_ms=0, end_ms=1000,
+                speaker="SPEAKER_00", text="x",
+                raw_timestamp="00:00:00.000 --> 00:00:01.000",
+            ),
+            VttBlock(
+                index="2",
+                start_ms=1000, end_ms=2000,
+                speaker="SPEAKER_01", text="y",
+                raw_timestamp="00:00:01.000 --> 00:00:02.000",
+            ),
+        ]
+        transcript = Transcript(
+            segments=(
+                TranscriptSegment(
+                    start_ms=0, end_ms=1000, text="x",
+                    speaker=SpeakerIdentity(
+                        diarization_tag="SPEAKER_00",
+                        recognized_name="Manuel",
+                        similarity=0.7,
+                    ),
+                ),
+                TranscriptSegment(
+                    start_ms=1000, end_ms=2000, text="y",
+                    speaker=SpeakerIdentity(diarization_tag="SPEAKER_01"),
+                ),
+            ),
+            audio_path="x.wav",
+            language="es",
+        )
 
-        1
-        00:00:00.000 --> 00:00:02.000
-        [Agustin] Texto que el reeval no logra confirmar
+        changed = apply_transcript_labels_to_blocks(blocks, transcript)
 
-        2
-        00:00:02.000 --> 00:00:04.000
-        [SPEAKER_03] Speaker no identificado de pyannote
-        """,
-    )
-    audio = _make_wav(tmp_path / "audio.wav", duration_s=5.0)
-    voices_folder = tmp_path / "voices"
-    voices_folder.mkdir()
-
-    fake_emb = np.ones(192)
-    embs = {"Agustin": fake_emb}
-
-    with (
-        patch("speechlib.tools.relabel_vtt.load_avg_voice_embeddings", return_value=embs),
-        patch("speechlib.tools.relabel_vtt.get_embedding", return_value=fake_emb),
-        # find_best_speaker retorna "unknown" → el bloque NO debe sobreescribirse
-        patch("speechlib.tools.relabel_vtt.find_best_speaker", return_value="unknown"),
-        patch("speechlib.tools.relabel_vtt.slice_and_save"),
-    ):
-        _run_relabel(vtt, audio, voices_folder, "--all-speakers")
-
-    out = vtt.with_stem(vtt.stem + "_relabeled")
-    content = out.read_text(encoding="utf-8")
-
-    # Invariante anti-bug: el literal "unknown" jamas aparece como label
-    assert "[unknown]" not in content
-    # Ambos labels originales preservados
-    assert "[Agustin]" in content
-    assert "[SPEAKER_03]" in content
+        assert changed == 1
+        assert blocks[0].speaker == "Manuel"
+        assert blocks[1].speaker == "SPEAKER_01"  # invariante anti-bug
 
 
-def test_relabel_vtt_all_speakers_leaves_confirmed_block_unchanged(tmp_path):
-    """Bloque [Agustin] donde audio SÍ supera threshold → se mantiene como [Agustin]."""
-    vtt = _write_vtt(
-        tmp_path / "test.vtt",
-        """\
-        WEBVTT
+# ── CLI integration con audio sintetico ──────────────────────────────────────
 
-        1
-        00:00:00.000 --> 00:00:02.000
-        [Agustin] Confirmado
-        """,
-    )
-    audio = _make_wav(tmp_path / "audio.wav", duration_s=3.0)
-    voices_folder = tmp_path / "voices"
-    voices_folder.mkdir()
 
-    fake_emb = np.ones(192)
-    embs = {"Agustin": fake_emb}
+class TestRelabelVttCli:
+    def _voices(self, tmp_path: Path) -> Path:
+        voices = tmp_path / "voices"
+        (voices / "Manuel").mkdir(parents=True)
+        _make_wav(voices / "Manuel" / "segment_01.wav", duration_s=2.0)
+        return voices
 
-    with (
-        patch("speechlib.tools.relabel_vtt.load_avg_voice_embeddings", return_value=embs),
-        patch("speechlib.tools.relabel_vtt.get_embedding", return_value=fake_emb),
-        patch("speechlib.tools.relabel_vtt.find_best_speaker", return_value="Agustin"),
-        patch("speechlib.tools.relabel_vtt.slice_and_save"),
-    ):
-        _run_relabel(vtt, audio, voices_folder, "--all-speakers")
+    def _run(self, vtt, audio, voices, *extra):
+        from speechlib.tools import relabel_vtt as m
 
-    out = vtt.with_stem(vtt.stem + "_relabeled")
-    content = out.read_text(encoding="utf-8")
-    assert "[Agustin]" in content
+        argv = ["relabel_vtt", str(vtt), str(audio), str(voices), *extra]
+        with patch("sys.argv", argv):
+            m.main()
+
+    def test_unidentified_block_label_preserved_when_no_match(self, tmp_path):
+        """Caso central del bug: SPEAKER_03 sin match → conserva SPEAKER_03,
+        NO se sobreescribe con [unknown]."""
+        from speechlib.tools.relabel_vtt import compute_embeddings_per_label
+
+        vtt = _write_vtt(
+            tmp_path / "t.vtt",
+            """\
+            WEBVTT
+
+            1
+            00:00:00.000 --> 00:00:02.000
+            [SPEAKER_03] hola
+            """,
+        )
+        audio = _make_wav(tmp_path / "a.wav", duration_s=3.0)
+        voices = self._voices(tmp_path)
+
+        # Library con embedding ortogonal al de SPEAKER_03 → no match
+        with (
+            patch(
+                "speechlib.tools.relabel_vtt.load_avg_voice_embeddings",
+                return_value={"Manuel": np.array([1.0, 0.0, 0.0])},
+            ),
+            patch(
+                "speechlib.tools.relabel_vtt.compute_embeddings_per_label",
+                return_value={"SPEAKER_03": np.array([0.0, 0.0, 1.0])},
+            ),
+        ):
+            self._run(vtt, audio, voices)
+
+        out = vtt.with_stem(vtt.stem + "_relabeled")
+        content = out.read_text(encoding="utf-8")
+        assert "[unknown]" not in content
+        assert "[SPEAKER_03]" in content
+
+    def test_identified_block_relabeled_to_match(self, tmp_path):
+        """SPEAKER_03 con match al embedding de Manuel → relabel a Manuel."""
+        vtt = _write_vtt(
+            tmp_path / "t.vtt",
+            """\
+            WEBVTT
+
+            1
+            00:00:00.000 --> 00:00:02.000
+            [SPEAKER_03] hola
+            """,
+        )
+        audio = _make_wav(tmp_path / "a.wav", duration_s=3.0)
+        voices = self._voices(tmp_path)
+
+        unit = np.array([1.0, 0.0, 0.0])
+        with (
+            patch(
+                "speechlib.tools.relabel_vtt.load_avg_voice_embeddings",
+                return_value={"Manuel": unit},
+            ),
+            patch(
+                "speechlib.tools.relabel_vtt.compute_embeddings_per_label",
+                return_value={"SPEAKER_03": unit},
+            ),
+        ):
+            self._run(vtt, audio, voices)
+
+        out = vtt.with_stem(vtt.stem + "_relabeled")
+        content = out.read_text(encoding="utf-8")
+        assert "[Manuel]" in content
+        assert "[SPEAKER_03]" not in content
+
+    def test_default_mode_skips_already_identified(self, tmp_path):
+        """Sin --all-speakers: no se computa embedding para bloques ya nombrados."""
+        vtt = _write_vtt(
+            tmp_path / "t.vtt",
+            """\
+            WEBVTT
+
+            1
+            00:00:00.000 --> 00:00:02.000
+            [Manuel] ya identificado
+
+            2
+            00:00:02.000 --> 00:00:04.000
+            [SPEAKER_03] no identificado
+            """,
+        )
+        audio = _make_wav(tmp_path / "a.wav", duration_s=5.0)
+        voices = self._voices(tmp_path)
+
+        compute_calls = []
+
+        def fake_compute(blocks, audio_path, target_labels=None, limit_s=60.0):
+            compute_calls.append(target_labels)
+            return {}
+
+        with (
+            patch(
+                "speechlib.tools.relabel_vtt.load_avg_voice_embeddings",
+                return_value={"Manuel": np.array([1.0, 0.0])},
+            ),
+            patch(
+                "speechlib.tools.relabel_vtt.compute_embeddings_per_label",
+                side_effect=fake_compute,
+            ),
+        ):
+            self._run(vtt, audio, voices)
+
+        # Solo SPEAKER_03 fue target
+        assert compute_calls == [{"SPEAKER_03"}]
+
+    def test_all_speakers_mode_targets_every_label(self, tmp_path):
+        """Con --all-speakers: target_labels incluye TODOS los labels del VTT."""
+        vtt = _write_vtt(
+            tmp_path / "t.vtt",
+            """\
+            WEBVTT
+
+            1
+            00:00:00.000 --> 00:00:02.000
+            [Manuel] ya identificado
+
+            2
+            00:00:02.000 --> 00:00:04.000
+            [SPEAKER_03] no identificado
+            """,
+        )
+        audio = _make_wav(tmp_path / "a.wav", duration_s=5.0)
+        voices = self._voices(tmp_path)
+
+        compute_calls = []
+
+        def fake_compute(blocks, audio_path, target_labels=None, limit_s=60.0):
+            compute_calls.append(target_labels)
+            return {}
+
+        with (
+            patch(
+                "speechlib.tools.relabel_vtt.load_avg_voice_embeddings",
+                return_value={"Manuel": np.array([1.0, 0.0])},
+            ),
+            patch(
+                "speechlib.tools.relabel_vtt.compute_embeddings_per_label",
+                side_effect=fake_compute,
+            ),
+        ):
+            self._run(vtt, audio, voices, "--all-speakers")
+
+        assert compute_calls == [{"Manuel", "SPEAKER_03"}]

@@ -1,27 +1,29 @@
 """
 Re-etiqueta los speakers de un VTT existente sin re-transcribir ni re-diarizar.
 
-Extrae el audio chunk de cada segmento [unknown] desde el WAV ya procesado,
-calcula el embedding y lo compara contra la libreria de voces.
+Reescritura Slice 10: el corazon de la logica vive ahora en el dominio puro
+(Transcript + assign_speakers) y este archivo es un thin CLI que orquesta
+el I/O necesario:
+
+  parse_vtt
+    -> Transcript
+    -> compute embeddings per label desde el audio
+    -> assign_speakers (funcion pura del dominio)
+    -> aplicar identidades a los VttBlocks
+    -> write_vtt
+
+Las dos ramas paralelas anteriores (--rttm y --all-speakers con codigo
+duplicado) fueron eliminadas. assign_speakers preserva por construccion
+el SPEAKER_XX cuando ningun voice supera threshold — el bug del literal
+[unknown] es estructuralmente imposible.
 
 Uso:
-    python speechlib/tools/relabel_vtt.py VTT_PATH AUDIO_PATH VOICES_FOLDER [--threshold 0.40]
-
-    VTT_PATH      : VTT a re-etiquetar
-    AUDIO_PATH    : WAV procesado (mismo que genero el VTT, ej: _16k.wav)
-    VOICES_FOLDER : carpeta con subdirectorios por speaker
-
-Ejemplo:
-    python speechlib/tools/relabel_vtt.py \\
-        "C:\\workspace\\@recordings\\20260320 Patricio Renner\\Voz 260320_164522_16k_121520_es.vtt" \\
-        "C:\\workspace\\@recordings\\20260320 Patricio Renner\\Voz 260320_164522_16k.wav" \\
-        "C:\\workspace\\#dev\\speechlib\\transcript_samples\\voices"
+    python -m speechlib.tools.relabel_vtt VTT_PATH AUDIO_PATH VOICES_FOLDER \\
+        [--threshold 0.45] [--min-margin 0.10] [--all-speakers]
 
 Output: escribe VTT corregido junto al original con sufijo _relabeled.vtt
-No modifica el archivo original.
 """
 
-import re
 import sys
 import tempfile
 from pathlib import Path
@@ -30,44 +32,155 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, r"c:\workspace\#dev\ClearerVoice-Studio\clearvoice")
 
 import numpy as np
-from speechlib.speaker_recognition import (
-    get_embedding,
-    cosine_similarity,
-    find_best_speaker,
-    load_avg_voice_embeddings,
-    SPEAKER_SIMILARITY_THRESHOLD,
-    is_unidentified_speaker,
-)
+
 from speechlib.audio_utils import slice_and_save
-from speechlib.vtt_utils import (
-    VttBlock,
-    TS_RE,
-    SPEAKER_RE,
-    ts_to_ms,
-    parse_vtt,
-    write_vtt,
+from speechlib.domain.recognition import assign_speakers
+from speechlib.domain.transcript import (
+    SpeakerIdentity,
+    Transcript,
+    TranscriptSegment,
 )
-
-DEFAULT_THRESHOLD = SPEAKER_SIMILARITY_THRESHOLD
-DEFAULT_PAD_MIN_MS = 2000  # ventana minima para embedding cuando --pad-short activo
-MIN_OVERLAP_S = 0.3  # minimum overlap for block-to-speaker matching
-
-
-def match_block_to_speaker(
-    block_start_s: float, block_end_s: float, annotation
-) -> str | None:
-    """Match a VTT block to a speaker tag by maximum overlap."""
-    best_spk, best_overlap = None, 0.0
-    for turn, _, spk in annotation.itertracks(yield_label=True):
-        overlap = min(turn.end, block_end_s) - max(turn.start, block_start_s)
-        if overlap > best_overlap:
-            best_overlap, best_spk = overlap, spk
-    if best_overlap < MIN_OVERLAP_S:
-        return None
-    return best_spk
+from speechlib.speaker_recognition import (
+    MIN_SEGMENT_DURATION_S,
+    SPEAKER_SIMILARITY_MIN_MARGIN,
+    SPEAKER_SIMILARITY_THRESHOLD,
+    _get_inference,
+    load_avg_voice_embeddings,
+)
+from speechlib.vtt_utils import VttBlock, parse_vtt, write_vtt
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Pure helpers ──────────────────────────────────────────────────────────────
+
+
+def _label_is_unidentified(label: str) -> bool:
+    """Inline reemplazo de is_unidentified_speaker (que se borra en Slice 11)."""
+    return label == "unknown" or (
+        label.startswith("SPEAKER_") and label[8:].isdigit()
+    )
+
+
+def build_transcript_from_vtt_blocks(
+    blocks: list[VttBlock],
+    audio_path: str,
+    language: str,
+) -> Transcript:
+    """Convierte VttBlocks parseados a Transcript del dominio.
+
+    Para cada bloque:
+    - Si el label parece SPEAKER_XX o "unknown", crea SpeakerIdentity
+      no identificada (recognized_name=None, diarization_tag=label).
+    - Si el label es un nombre real, crea SpeakerIdentity ya identificada.
+
+    En ambos casos, el label original viaja como diarization_tag para
+    soportar el agrupamiento de assign_speakers (un embedding por label).
+
+    Pura: sin I/O.
+    """
+    segments = []
+    for b in blocks:
+        if _label_is_unidentified(b.speaker):
+            identity = SpeakerIdentity(
+                diarization_tag=b.speaker,
+                recognized_name=None,
+            )
+        else:
+            identity = SpeakerIdentity(
+                diarization_tag=b.speaker,
+                recognized_name=b.speaker,
+                similarity=None,
+            )
+        segments.append(
+            TranscriptSegment(
+                start_ms=b.start_ms,
+                end_ms=b.end_ms,
+                text=b.text,
+                speaker=identity,
+            )
+        )
+    return Transcript(
+        segments=tuple(segments),
+        audio_path=audio_path,
+        language=language,
+    )
+
+
+def apply_transcript_labels_to_blocks(
+    blocks: list[VttBlock],
+    transcript: Transcript,
+) -> int:
+    """Aplica los labels del Transcript de vuelta a los VttBlocks por indice.
+
+    Pura. Retorna la cantidad de bloques cuyo label cambio.
+    """
+    changed = 0
+    for block, segment in zip(blocks, transcript.segments):
+        new_label = segment.speaker.label
+        if new_label != block.speaker:
+            block.speaker = new_label
+            changed += 1
+    return changed
+
+
+# ── Application service: compute embeddings from audio ───────────────────────
+
+
+def compute_embeddings_per_label(
+    blocks: list[VttBlock],
+    audio_path: str,
+    target_labels: set[str] | None = None,
+    limit_s: float = 60.0,
+) -> dict[str, np.ndarray]:
+    """Por cada label en target_labels (o todos si None), computa el embedding
+    promedio a partir de chunks de audio. Mirroring de la logica canonica de
+    speaker_recognition: per-chunk embedding + mean, filtrando NaN.
+
+    Mutable shell: I/O del audio + slicing + inference. Las decisiones viven
+    en el dominio.
+    """
+    inference = _get_inference()
+    grouped: dict[str, list[VttBlock]] = {}
+    for b in blocks:
+        if target_labels is not None and b.speaker not in target_labels:
+            continue
+        grouped.setdefault(b.speaker, []).append(b)
+
+    result: dict[str, np.ndarray] = {}
+    tmp_dir = Path(tempfile.mkdtemp(prefix="relabel_vtt_"))
+    try:
+        for label, label_blocks in grouped.items():
+            accumulated_ms = 0
+            embs: list[np.ndarray] = []
+            for i, b in enumerate(label_blocks):
+                if accumulated_ms >= limit_s * 1000:
+                    break
+                # Slice 12: filtrar turnos < MIN_SEGMENT_DURATION_S antes de
+                # cortar (pyannote/embedding rompe en chunks ultra-cortos).
+                if (b.end_ms - b.start_ms) < MIN_SEGMENT_DURATION_S * 1000:
+                    continue
+                chunk = tmp_dir / f"chunk_{i}.wav"
+                try:
+                    slice_and_save(audio_path, b.start_ms, b.end_ms, str(chunk))
+                    arr = np.asarray(inference(str(chunk))).flatten()
+                    if not np.isnan(arr).any():
+                        embs.append(arr)
+                except Exception:
+                    pass
+                finally:
+                    chunk.unlink(missing_ok=True)
+                accumulated_ms += b.end_ms - b.start_ms
+            if embs:
+                result[label] = np.mean(embs, axis=0)
+    finally:
+        try:
+            tmp_dir.rmdir()
+        except OSError:
+            pass
+
+    return result
+
+
+# ── Main CLI ─────────────────────────────────────────────────────────────────
 
 
 def main():
@@ -77,202 +190,108 @@ def main():
     parser.add_argument("vtt_path")
     parser.add_argument("audio_path")
     parser.add_argument("voices_folder")
-    parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     parser.add_argument(
-        "--pad-short",
-        action="store_true",
-        help="[EXPERIMENTAL] Segmentos mas cortos que --pad-min-ms se expanden "
-        "simetricamente para el calculo del embedding. "
-        "Los timestamps del VTT no cambian.",
+        "--threshold",
+        type=float,
+        default=SPEAKER_SIMILARITY_THRESHOLD,
     )
     parser.add_argument(
-        "--pad-min-ms",
-        type=int,
-        default=DEFAULT_PAD_MIN_MS,
-        help=f"Duracion minima en ms para embedding cuando --pad-short activo (default: {DEFAULT_PAD_MIN_MS})",
+        "--min-margin",
+        type=float,
+        default=SPEAKER_SIMILARITY_MIN_MARGIN,
+        help=(
+            "Margen minimo top1 vs top2 para aceptar un match. "
+            f"Default: {SPEAKER_SIMILARITY_MIN_MARGIN}. Pasar 0 para desactivar."
+        ),
     )
     parser.add_argument(
         "--all-speakers",
         action="store_true",
-        help="Re-evaluar TODOS los bloques del VTT (no solo [unknown]). "
-        "Permite detectar misidentificaciones: bloques ya nombrados cuyo "
-        "audio no supera threshold se reetiquetan a [unknown].",
-    )
-    parser.add_argument(
-        "--rttm",
-        type=Path,
-        help="Path to diarization.rttm file. If provided, groups VTT blocks by SPEAKER_XX "
-        "and runs speaker_recognition once per group instead of once per block.",
-    )
-    parser.add_argument(
-        "--speaker-map",
-        type=Path,
-        help="Path to speaker_map.json. If provided with --rttm, applies mapping directly "
-        "without computing embeddings.",
+        help=(
+            "Re-evaluar TODOS los bloques del VTT, no solo los no identificados. "
+            "Util para detectar misidentificaciones previas."
+        ),
     )
     args = parser.parse_args()
 
     vtt_path = Path(args.vtt_path)
     audio_path = args.audio_path
     voices_folder = Path(args.voices_folder)
-    threshold = args.threshold
-    pad_short = args.pad_short
-    pad_min_ms = args.pad_min_ms
-    all_speakers = args.all_speakers
-    rttm_path = args.rttm
-    speaker_map_path = args.speaker_map
 
-    print(f"\nVTT      : {vtt_path.name}")
-    print(f"Audio    : {Path(audio_path).name}")
-    print(f"Voices   : {voices_folder}")
-    print(f"Threshold: {threshold}")
-    if all_speakers:
-        print("Modo     : --all-speakers (re-evalua todos los bloques)")
-    if pad_short:
-        print(
-            f"Padding  : EXPERIMENTAL — segmentos < {pad_min_ms}ms se expanden a {pad_min_ms}ms para embedding"
-        )
+    print(f"\nVTT       : {vtt_path.name}")
+    print(f"Audio     : {Path(audio_path).name}")
+    print(f"Voices    : {voices_folder}")
+    print(f"Threshold : {args.threshold}")
+    print(f"Min margin: {args.min_margin}")
+    if args.all_speakers:
+        print("Modo      : --all-speakers (re-evalua todos los bloques)")
+    else:
+        print("Modo      : solo bloques no identificados (SPEAKER_XX o unknown)")
 
     print("\nParsando VTT...")
     header, blocks = parse_vtt(vtt_path)
-    unknown_count = sum(1 for b in blocks if is_unidentified_speaker(b.speaker))
-    target_count = len(blocks) if all_speakers else unknown_count
-    print(f"  {len(blocks)} segmentos totales, {unknown_count} no identificados")
+    transcript = build_transcript_from_vtt_blocks(
+        blocks, str(audio_path), language="es"
+    )
+    unknown_count = sum(1 for s in transcript.segments if not s.speaker.is_identified)
+    print(f"  {len(blocks)} bloques totales, {unknown_count} no identificados")
 
-    annotation = None
-    speaker_map = None
-    use_rttm_grouping = rttm_path is not None
-    use_speaker_map_only = rttm_path is not None and speaker_map_path is not None
-
-    if rttm_path and rttm_path.exists():
-        from pyannote.database.util import load_rttm
-
-        annotation = next(iter(load_rttm(str(rttm_path)).values()))
-        print(f"  RTTM loaded: {rttm_path.name}")
-
-    if speaker_map_path and speaker_map_path.exists():
-        import json
-
-        speaker_map = json.loads(speaker_map_path.read_text(encoding="utf-8"))
-        print(f"  speaker_map loaded: {speaker_map_path.name}")
-
-    if use_speaker_map_only:
-        print("\nModo: --rttm + --speaker-map (aplicando mapeo directo sin embeddings)")
-        for block in blocks:
-            spk_tag = match_block_to_speaker(
-                block.start_ms / 1000, block.end_ms / 1000, annotation
-            )
-            if spk_tag and spk_tag in speaker_map:
-                block.speaker = speaker_map[spk_tag]
-        changed = sum(1 for b in blocks if not is_unidentified_speaker(b.speaker))
-        errors = 0
-    elif use_rttm_grouping:
-        print("\nModo: --rttm (agrupando por SPEAKER_XX)")
-        from speechlib.speaker_recognition import speaker_recognition
-
-        print("Cargando libreria de voces...")
-        speaker_embs = load_avg_voice_embeddings(voices_folder)
-        print(f"  {len(speaker_embs)} speakers: {sorted(speaker_embs)}")
-
-        block_groups = {}
-        for block in blocks:
-            spk_tag = match_block_to_speaker(
-                block.start_ms / 1000, block.end_ms / 1000, annotation
-            )
-            if spk_tag:
-                if spk_tag not in block_groups:
-                    block_groups[spk_tag] = []
-                block_groups[spk_tag].append(block)
-
-        for spk_tag, group_blocks in block_groups.items():
-            segments = [
-                [b.start_ms / 1000, b.end_ms / 1000, spk_tag] for b in group_blocks
-            ]
-            spk_name = speaker_recognition(
-                str(audio_path), str(voices_folder), segments
-            )
-            for block in group_blocks:
-                block.speaker = spk_name if spk_name != "unknown" else spk_tag
-
-        changed = sum(1 for b in blocks if not is_unidentified_speaker(b.speaker))
-        errors = 0
+    if args.all_speakers:
+        target_labels = set(transcript.diarization_tags)
     else:
-        print("\nCargando libreria de voces...")
-        speaker_embs = load_avg_voice_embeddings(voices_folder)
-        print(f"  {len(speaker_embs)} speakers: {sorted(speaker_embs)}")
+        target_labels = {
+            s.speaker.diarization_tag
+            for s in transcript.segments
+            if not s.speaker.is_identified
+        }
 
-        tmp = Path(tempfile.mktemp(suffix=".wav"))
-        changed = 0
-        errors = 0
+    if not target_labels:
+        print("\nNada que re-evaluar (sin bloques no identificados).")
+        suffix = "_relabeled"
+        out_path = vtt_path.with_stem(vtt_path.stem + suffix)
+        write_vtt(out_path, header, blocks)
+        return
 
-        label = "todos los" if all_speakers else f"{unknown_count} [unknown]"
-        print(f"\nRe-etiquetando {label} segmentos...")
-        for i, block in enumerate(blocks):
-            if not all_speakers and not is_unidentified_speaker(block.speaker):
-                continue
+    print(f"\nCargando libreria de voces...")
+    voice_library = load_avg_voice_embeddings(voices_folder)
+    print(f"  {len(voice_library)} speakers: {sorted(voice_library)}")
 
-            try:
-                duration_ms = block.end_ms - block.start_ms
-                if pad_short and duration_ms < pad_min_ms:
-                    pad = (pad_min_ms - duration_ms) // 2
-                    extract_start = max(0, block.start_ms - pad)
-                    extract_end = block.end_ms + pad
-                else:
-                    extract_start = block.start_ms
-                    extract_end = block.end_ms
-                slice_and_save(audio_path, extract_start, extract_end, str(tmp))
-                test_emb = get_embedding(str(tmp))
-                new_speaker = find_best_speaker(test_emb, speaker_embs, threshold)
-            except Exception as e:
-                errors += 1
-                continue
+    print(f"\nComputando embeddings de {len(target_labels)} labels...")
+    embeddings_by_tag = compute_embeddings_per_label(
+        blocks=blocks,
+        audio_path=str(audio_path),
+        target_labels=target_labels,
+    )
+    print(f"  Embeddings calculados: {len(embeddings_by_tag)} / {len(target_labels)}")
 
-            # FIX Slice 7: bug original del literal [unknown] en --all-speakers.
-            #
-            # find_best_speaker devuelve "unknown" cuando ningun voice supera
-            # threshold. Antes, el codigo escribia ese "unknown" literal sobre
-            # un block que ya tenia identidad valida (sea SPEAKER_XX de pyannote
-            # o un nombre identificado previamente), perdiendo la informacion.
-            #
-            # Politica nueva: NUNCA sobreescribir con "unknown". Si el nuevo
-            # match no pasa threshold, conservamos el label existente — es la
-            # ultima informacion confiable que tenemos. Esto preserva el
-            # SPEAKER_XX pyannote en su forma original y respeta nombres
-            # asignados previamente que la re-evaluacion no logro confirmar.
-            #
-            # Solo aceptamos transiciones a un nombre real.
-            if new_speaker != "unknown" and new_speaker != block.speaker:
-                block.speaker = new_speaker
-                changed += 1
+    print(f"\nAplicando assign_speakers...")
+    relabeled = assign_speakers(
+        transcript=transcript,
+        embeddings_by_tag=embeddings_by_tag,
+        voice_library=voice_library,
+        threshold=args.threshold,
+        min_margin=args.min_margin,
+    )
+    changed = apply_transcript_labels_to_blocks(blocks, relabeled)
 
-            if (i + 1) % 50 == 0 or i + 1 == len(blocks):
-                pct = (i + 1) / len(blocks) * 100
-                print(
-                    f"  [{pct:5.1f}%] {i + 1}/{len(blocks)}  identificados: {changed}  errores: {errors}"
-                )
-
-        tmp.unlink(missing_ok=True)
-
-    suffix = "_relabeled_padded" if pad_short else "_relabeled"
-    out_path = vtt_path.with_stem(vtt_path.stem + suffix)
+    out_path = vtt_path.with_stem(vtt_path.stem + "_relabeled")
     write_vtt(out_path, header, blocks)
 
     print(f"\n{'=' * 50}")
-    print(f"  Segmentos re-etiquetados : {changed} / {target_count}")
+    print(f"  Bloques re-etiquetados : {changed}")
     print(
-        f"  Siguen sin identificar  : {sum(1 for b in blocks if is_unidentified_speaker(b.speaker))}"
+        f"  Siguen sin identificar : "
+        f"{sum(1 for s in relabeled.segments if not s.speaker.is_identified)}"
     )
-    print(f"  Errores                  : {errors}")
-    print(f"  Output                   : {out_path.name}")
+    print(f"  Output                 : {out_path.name}")
     print(f"{'=' * 50}")
 
-    # Distribucion final de speakers
     from collections import Counter
 
     dist = Counter(b.speaker for b in blocks)
     print("\nDistribucion de speakers:")
     for speaker, count in sorted(dist.items(), key=lambda x: -x[1]):
-        print(f"  {speaker:<25} {count:>4} segmentos")
+        print(f"  {speaker:<28} {count:>4} bloques")
 
 
 if __name__ == "__main__":
