@@ -15,7 +15,7 @@ WAVs) vive en speechlib/services/extract_samples.py.
 """
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Optional
 
 from .transcript import Transcript, TranscriptSegment
 
@@ -39,6 +39,32 @@ class SpeakerSamplePlan:
     speaker_label: str
     is_identified: bool
     clips: tuple[SampleClip, ...]
+
+
+def _build_plan_for_speaker(
+    label: str,
+    is_identified: bool,
+    segments: list[TranscriptSegment],
+    max_clips: int,
+    min_duration_ms: int,
+) -> Optional[SpeakerSamplePlan]:
+    """Construye el plan para un speaker individual, o None si todos sus
+    clips quedan filtrados por duracion minima.
+
+    Pura: cero I/O. Top-N por duracion descendente, reordenados por start_ms
+    para output consistente.
+    """
+    eligible = [s for s in segments if (s.end_ms - s.start_ms) >= min_duration_ms]
+    if not eligible:
+        return None
+    top = sorted(eligible, key=lambda s: -(s.end_ms - s.start_ms))[:max_clips]
+    top.sort(key=lambda s: s.start_ms)
+    clips = tuple(SampleClip(start_ms=s.start_ms, end_ms=s.end_ms) for s in top)
+    return SpeakerSamplePlan(
+        speaker_label=label,
+        is_identified=is_identified,
+        clips=clips,
+    )
 
 
 def plan_speaker_samples(
@@ -75,22 +101,15 @@ def plan_speaker_samples(
 
     plans: list[SpeakerSamplePlan] = []
     for label, segments in grouped.items():
-        # Filtrar por duracion minima
-        eligible = [s for s in segments if (s.end_ms - s.start_ms) >= min_clip_duration_ms]
-        if not eligible:
-            continue
-        # Top-N por duracion descendente
-        top = sorted(eligible, key=lambda s: -(s.end_ms - s.start_ms))[:max_clips_per_speaker]
-        # Reordenar por start_ms para output consistente
-        top.sort(key=lambda s: s.start_ms)
-        clips = tuple(SampleClip(start_ms=s.start_ms, end_ms=s.end_ms) for s in top)
-        plans.append(
-            SpeakerSamplePlan(
-                speaker_label=label,
-                is_identified=identified_label[label],
-                clips=clips,
-            )
+        plan = _build_plan_for_speaker(
+            label=label,
+            is_identified=identified_label[label],
+            segments=segments,
+            max_clips=max_clips_per_speaker,
+            min_duration_ms=min_clip_duration_ms,
         )
+        if plan is not None:
+            plans.append(plan)
 
     # Identificados primero (alfabetico), luego no identificados (alfabetico).
     plans.sort(key=lambda p: (not p.is_identified, p.speaker_label))
