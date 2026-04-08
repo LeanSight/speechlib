@@ -39,6 +39,36 @@ from .enhance_audio import enhance_audio
 from .compress_audio import compress_audio
 
 
+def _build_speaker_groups(annotation):
+    """Itera la annotation pyannote y construye las tres estructuras paralelas
+    que el resto del flujo legacy consume.
+
+    Returns:
+      common: list[[start, end, SPEAKER_XX]] — segmentos planos en orden.
+      speakers: dict[SPEAKER_XX, list[[start, end, SPEAKER_XX]]] — agrupado por tag.
+      speaker_tags: list[SPEAKER_XX] — orden de aparicion (sin duplicados).
+      speaker_map: dict[SPEAKER_XX, SPEAKER_XX] — placeholder identidad=tag.
+    """
+    common: list = []
+    speakers: dict = {}
+    speaker_tags: list = []
+    speaker_map: dict = {}
+
+    for turn, _, speaker in annotation.itertracks(yield_label=True):
+        start = round(turn.start, 1)
+        end = round(turn.end, 1)
+        common.append([start, end, speaker])
+
+        if speaker not in speaker_tags:
+            speaker_tags.append(speaker)
+            speaker_map[speaker] = speaker
+            speakers[speaker] = []
+
+        speakers[speaker].append([start, end, speaker])
+
+    return common, speakers, speaker_tags, speaker_map
+
+
 def _run_diarization_cached(state: AudioState, access_token: str | None):
     """Devuelve la annotation pyannote, reutilizando diarization.rttm si existe.
 
@@ -140,29 +170,11 @@ def core_analysis(
         )
         compress_thread.start()
 
-    speaker_tags = []
-
     annotation, from_cache = _run_diarization_cached(state, ACCESS_TOKEN)
     if from_cache:
         print("diarization loaded from cache.")
 
-    speakers = {}
-
-    common = []
-
-    speaker_map = {}
-    for turn, _, speaker in annotation.itertracks(yield_label=True):
-        start = round(turn.start, 1)
-        end = round(turn.end, 1)
-        common.append([start, end, speaker])
-
-        # find different speakers
-        if speaker not in speaker_tags:
-            speaker_tags.append(speaker)
-            speaker_map[speaker] = speaker
-            speakers[speaker] = []
-
-        speakers[speaker].append([start, end, speaker])
+    common, speakers, speaker_tags, speaker_map = _build_speaker_groups(annotation)
 
     has_voices_folder = voices_folder is not None and voices_folder != ""
     if has_voices_folder:
