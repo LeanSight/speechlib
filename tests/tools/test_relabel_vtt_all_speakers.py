@@ -130,8 +130,14 @@ def test_relabel_vtt_all_speakers_processes_every_block(tmp_path):
     assert len(processed_blocks) == 2
 
 
-def test_relabel_vtt_all_speakers_corrects_misidentified_block(tmp_path):
-    """Bloque [Agustin] donde audio no supera threshold → se corrige a 'unknown'."""
+def test_relabel_vtt_all_speakers_preserves_label_when_reeval_fails(tmp_path):
+    """Slice 7 fix: cuando find_best_speaker devuelve 'unknown' (re-evaluacion
+    no supera threshold), el bloque CONSERVA su label existente — jamas se
+    sobreescribe con el literal 'unknown'.
+
+    Este test ENCODE la nueva politica anti-bug. Antes el codigo escribia
+    [unknown] sobre bloques que ya tenian identidad valida, perdiendo info.
+    Ahora preserva el label existente como ultima fuente confiable."""
     vtt = _write_vtt(
         tmp_path / "test.vtt",
         """\
@@ -139,10 +145,14 @@ def test_relabel_vtt_all_speakers_corrects_misidentified_block(tmp_path):
 
         1
         00:00:00.000 --> 00:00:02.000
-        [Agustin] Texto mal identificado
+        [Agustin] Texto que el reeval no logra confirmar
+
+        2
+        00:00:02.000 --> 00:00:04.000
+        [SPEAKER_03] Speaker no identificado de pyannote
         """,
     )
-    audio = _make_wav(tmp_path / "audio.wav", duration_s=3.0)
+    audio = _make_wav(tmp_path / "audio.wav", duration_s=5.0)
     voices_folder = tmp_path / "voices"
     voices_folder.mkdir()
 
@@ -152,7 +162,7 @@ def test_relabel_vtt_all_speakers_corrects_misidentified_block(tmp_path):
     with (
         patch("speechlib.tools.relabel_vtt.load_avg_voice_embeddings", return_value=embs),
         patch("speechlib.tools.relabel_vtt.get_embedding", return_value=fake_emb),
-        # find_best_speaker retorna "unknown" → el bloque se debe reetiqueta
+        # find_best_speaker retorna "unknown" → el bloque NO debe sobreescribirse
         patch("speechlib.tools.relabel_vtt.find_best_speaker", return_value="unknown"),
         patch("speechlib.tools.relabel_vtt.slice_and_save"),
     ):
@@ -160,8 +170,12 @@ def test_relabel_vtt_all_speakers_corrects_misidentified_block(tmp_path):
 
     out = vtt.with_stem(vtt.stem + "_relabeled")
     content = out.read_text(encoding="utf-8")
-    assert "[Agustin]" not in content
-    assert "[unknown]" in content
+
+    # Invariante anti-bug: el literal "unknown" jamas aparece como label
+    assert "[unknown]" not in content
+    # Ambos labels originales preservados
+    assert "[Agustin]" in content
+    assert "[SPEAKER_03]" in content
 
 
 def test_relabel_vtt_all_speakers_leaves_confirmed_block_unchanged(tmp_path):

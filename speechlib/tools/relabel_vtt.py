@@ -227,9 +227,21 @@ def main():
                 errors += 1
                 continue
 
-            if new_speaker != block.speaker and (
-                new_speaker != "unknown" or all_speakers
-            ):
+            # FIX Slice 7: bug original del literal [unknown] en --all-speakers.
+            #
+            # find_best_speaker devuelve "unknown" cuando ningun voice supera
+            # threshold. Antes, el codigo escribia ese "unknown" literal sobre
+            # un block que ya tenia identidad valida (sea SPEAKER_XX de pyannote
+            # o un nombre identificado previamente), perdiendo la informacion.
+            #
+            # Politica nueva: NUNCA sobreescribir con "unknown". Si el nuevo
+            # match no pasa threshold, conservamos el label existente — es la
+            # ultima informacion confiable que tenemos. Esto preserva el
+            # SPEAKER_XX pyannote en su forma original y respeta nombres
+            # asignados previamente que la re-evaluacion no logro confirmar.
+            #
+            # Solo aceptamos transiciones a un nombre real.
+            if new_speaker != "unknown" and new_speaker != block.speaker:
                 block.speaker = new_speaker
                 changed += 1
 
