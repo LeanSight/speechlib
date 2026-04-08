@@ -39,6 +39,38 @@ from .enhance_audio import enhance_audio
 from .compress_audio import compress_audio
 
 
+def _preprocess_audio(file_name: str, *, skip_enhance: bool) -> AudioState:
+    """Pipeline de pre-processing del audio fuente.
+
+    Pasos: convert_to_wav -> mono -> re_encode -> 16k -> loudnorm -> [enhance].
+    Reusa cache 16k.wav cuando existe en artifacts_dir.
+    """
+    state = AudioState(source_path=Path(file_name), working_path=Path(file_name))
+    state.artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    cached_16k = state.artifacts_dir / "16k.wav"
+    if cached_16k.exists():
+        state = state.model_copy(
+            update={
+                "working_path": cached_16k,
+                "is_wav": True,
+                "is_mono": True,
+                "is_16bit": True,
+                "is_16khz": True,
+            }
+        )
+    else:
+        state = convert_to_wav(state)
+        state = convert_to_mono(state)
+        state = re_encode(state)
+        state = resample_to_16k(state)
+
+    state = loudnorm(state)
+    if not skip_enhance:
+        state = enhance_audio(state)
+    return state
+
+
 # by default use google speech-to-text API
 # if False, then use whisper finetuned version for sinhala
 def core_analysis(
@@ -63,27 +95,7 @@ def core_analysis(
 
     # <-------------------PreProcessing file-------------------------->
 
-    state = AudioState(source_path=Path(file_name), working_path=Path(file_name))
-    state.artifacts_dir.mkdir(parents=True, exist_ok=True)
-    cached_16k = state.artifacts_dir / "16k.wav"
-    if cached_16k.exists():
-        state = state.model_copy(
-            update={
-                "working_path": cached_16k,
-                "is_wav": True,
-                "is_mono": True,
-                "is_16bit": True,
-                "is_16khz": True,
-            }
-        )
-    else:
-        state = convert_to_wav(state)
-        state = convert_to_mono(state)
-        state = re_encode(state)
-        state = resample_to_16k(state)
-    state = loudnorm(state)
-    if not skip_enhance:
-        state = enhance_audio(state)
+    state = _preprocess_audio(file_name, skip_enhance=skip_enhance)
 
     # <--------------------running analysis--------------------------->
 
