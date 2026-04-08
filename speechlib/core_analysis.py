@@ -156,7 +156,8 @@ def core_analysis(
 
         speakers[speaker].append([start, end, speaker])
 
-    if voices_folder != None and voices_folder != "":
+    has_voices_folder = voices_folder is not None and voices_folder != ""
+    if has_voices_folder:
         speaker_map_path = state.artifacts_dir / "speaker_map.json"
 
         if speaker_map_path.exists():
