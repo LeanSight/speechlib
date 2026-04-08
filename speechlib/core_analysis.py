@@ -39,6 +39,53 @@ from .enhance_audio import enhance_audio
 from .compress_audio import compress_audio
 
 
+def _publish_domain_artifacts(
+    common_segments: list,
+    annotation,
+    speaker_map: dict,
+    state: AudioState,
+    language: str,
+) -> None:
+    """Publica el aggregate del nuevo dominio en paralelo al output legacy.
+
+    transcript.json es el formato canonico futuro; el VTT queda como render.
+    Cero impacto sobre el output legacy: si esto falla, no rompe la corrida.
+    """
+    try:
+        from .domain.sample_extraction import plan_speaker_samples
+        from .services.extract_samples import extract_speaker_samples
+        from .services.transcript_builder import (
+            build_transcript_from_legacy_segments,
+        )
+
+        annotation_turns = [
+            (turn.start, turn.end, tag)
+            for turn, _, tag in annotation.itertracks(yield_label=True)
+        ]
+        transcript = build_transcript_from_legacy_segments(
+            legacy_segments=common_segments,
+            annotation_turns=annotation_turns,
+            speaker_map=speaker_map,
+            audio_path=str(state.working_path),
+            language=language,
+        )
+        transcript.save(state.artifacts_dir / "transcript.json")
+
+        plans = plan_speaker_samples(
+            transcript,
+            max_clips_per_speaker=5,
+            min_clip_duration_ms=2000,
+        )
+        if plans:
+            extract_speaker_samples(
+                plans=plans,
+                audio_path=state.working_path,
+                output_dir=state.artifacts_dir / "samples",
+            )
+    except Exception as exc:
+        print(f"WARNING: domain transcript publish failed ({exc}). Legacy output OK.")
+
+
 def _transcribe_segments(
     state: AudioState,
     common: list,
@@ -356,42 +403,7 @@ def core_analysis(
             output_format,
         )
 
-    # ── Slice 5: publicar el aggregate del nuevo dominio en paralelo ────────
-    # transcript.json es el formato canonico futuro; el VTT queda como render.
-    # Cero impacto sobre el output legacy: si esto falla, no rompe la corrida.
-    try:
-        from .domain.sample_extraction import plan_speaker_samples
-        from .services.extract_samples import extract_speaker_samples
-        from .services.transcript_builder import (
-            build_transcript_from_legacy_segments,
-        )
-
-        annotation_turns = [
-            (turn.start, turn.end, tag)
-            for turn, _, tag in annotation.itertracks(yield_label=True)
-        ]
-        transcript = build_transcript_from_legacy_segments(
-            legacy_segments=common_segments,
-            annotation_turns=annotation_turns,
-            speaker_map=speaker_map,
-            audio_path=str(state.working_path),
-            language=language,
-        )
-        transcript.save(state.artifacts_dir / "transcript.json")
-
-        plans = plan_speaker_samples(
-            transcript,
-            max_clips_per_speaker=5,
-            min_clip_duration_ms=2000,
-        )
-        if plans:
-            extract_speaker_samples(
-                plans=plans,
-                audio_path=state.working_path,
-                output_dir=state.artifacts_dir / "samples",
-            )
-    except Exception as exc:
-        print(f"WARNING: domain transcript publish failed ({exc}). Legacy output OK.")
+    _publish_domain_artifacts(common_segments, annotation, speaker_map, state, language)
 
     # Wait for background compression to finish
     if compress_thread is not None:
