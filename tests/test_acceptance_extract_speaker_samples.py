@@ -53,9 +53,9 @@ def test_service_writes_wavs_per_speaker_label(tmp_path):
 
     result = extract_speaker_samples(plans, audio, out_dir)
 
-    # Estructura: <out_dir>/<speaker_label>/clip_NN.wav
+    # Slice 16: identificados al raiz, no identificados a por_nombrar/
     manuel_dir = out_dir / "Manuel Olguin"
-    spk07_dir = out_dir / "SPEAKER_07"
+    spk07_dir = out_dir / "por_nombrar" / "SPEAKER_07"
     assert manuel_dir.is_dir()
     assert spk07_dir.is_dir()
 

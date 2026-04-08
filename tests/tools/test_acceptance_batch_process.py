@@ -163,8 +163,9 @@ def test_batch_report_lists_unknown_speakers(tmp_path):
         )
 
     assert len(report.unknown_speakers) >= 1
-    # Estructura de salida nueva: <unknown>/<audio_stem>/<speaker_label>/clip_NN.wav
-    assert (unknown_dir / audio_path.stem / "SPEAKER_01").is_dir()
+    # Slice 16: por_nombrar/ subfolder para no identificados.
+    # Estructura: <unknown>/<audio_stem>/por_nombrar/<SPEAKER_XX>/clip_NN.wav
+    assert (unknown_dir / audio_path.stem / "por_nombrar" / "SPEAKER_01").is_dir()
 
 
 def test_batch_report_lists_identified_speakers(tmp_path):
