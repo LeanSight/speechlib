@@ -20,8 +20,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core_analysis import core_analysis
-from ..speaker_recognition import is_unidentified_speaker
-from .extract_unknown_speakers import extract_unknown_speakers
+from ..domain.sample_extraction import plan_speaker_samples
+from ..domain.transcript import Transcript
+from ..services.extract_samples import extract_speaker_samples
 
 logger = logging.getLogger(__name__)
 
@@ -118,35 +119,49 @@ def batch_process(
 
                 report.processed_files.append(audio_path)
 
-                # Recolectar speakers: conocidos e incógnitos
-                unknown_segs: dict[str, list[list[float]]] = {}
-                for seg in segments:
-                    start, end, text, speaker = seg[0], seg[1], seg[2], seg[3]
-                    if is_unidentified_speaker(speaker):
-                        # Recuperar tag original no disponible post-transcripción:
-                        # usamos el speaker label tal cual viene del pipeline
-                        unknown_segs.setdefault(speaker, []).append([start, end])
-                    else:
-                        report.identified_speakers.add(speaker)
+                # Slice 8: usar el dominio nuevo. core_analysis ya publico
+                # transcript.json en artifacts_dir; lo cargamos para clasificar
+                # speakers y extraer samples de los no identificados al
+                # unknown_output_dir (con sub-dir por audio_stem para
+                # disambiguar entre recordings del mismo speaker).
+                audio_artifacts_dir = audio_path.parent / f".{audio_path.stem}"
+                transcript_path = audio_artifacts_dir / "transcript.json"
 
-                # Extraer clips de desconocidos en artifacts_dir/unknown_speakers/
-                if unknown_segs:
-                    audio_artifacts_dir = audio_path.parent / f".{audio_path.stem}"
-                    extracted = extract_unknown_speakers(
-                        audio_path=audio_path,
-                        unknown_segments=unknown_segs,
-                        output_dir=audio_artifacts_dir / "unknown_speakers",
-                        min_duration_s=min_unknown_duration_s,
-                        max_clips=max_unknown_clips,
+                if transcript_path.exists():
+                    transcript = Transcript.load(transcript_path)
+                    for seg in transcript.segments:
+                        if seg.speaker.is_identified:
+                            report.identified_speakers.add(seg.speaker.recognized_name)
+
+                    # Extraer samples solo de los NO identificados
+                    plans = plan_speaker_samples(
+                        transcript,
+                        max_clips_per_speaker=max_unknown_clips,
+                        min_clip_duration_ms=int(min_unknown_duration_s * 1000),
                     )
-                    for tag, folder_path in extracted.items():
-                        report.unknown_speakers.append(
-                            {
-                                "tag": tag,
-                                "audio": audio_path,
-                                "folder": folder_path,
-                            }
+                    unknown_plans = tuple(p for p in plans if not p.is_identified)
+                    if unknown_plans:
+                        unknown_audio_dir = unknown_output_dir / audio_path.stem
+                        written = extract_speaker_samples(
+                            plans=unknown_plans,
+                            audio_path=audio_path,
+                            output_dir=unknown_audio_dir,
                         )
+                        for label, paths in written.items():
+                            report.unknown_speakers.append(
+                                {
+                                    "tag": label,
+                                    "audio": audio_path,
+                                    "folder": unknown_audio_dir / label,
+                                }
+                            )
+                else:
+                    # Fallback: clasificacion por inspeccion del label legacy
+                    # (no deberia ocurrir si Slice 5 esta cableado)
+                    for seg in segments:
+                        speaker = seg[3]
+                        if not speaker.startswith("SPEAKER_") and speaker != "unknown":
+                            report.identified_speakers.add(speaker)
 
             except Exception:
                 logger.exception("Error procesando %s", audio_path)

@@ -156,42 +156,12 @@ def test_detect_unknown_speakers_multiple_unknowns(tmp_path):
     assert set(result.keys()) == {"SPEAKER_00", "SPEAKER_01", "SPEAKER_02"}
 
 
-# ── Slice 9: AT de integración detect → extract ──────────────────────────────
-
-
-def test_detect_and_extract_creates_clips_for_unknown(tmp_path):
-    """Encadenamiento completo: detect_unknown_speakers → extract_unknown_speakers."""
-    from speechlib.speaker_recognition import detect_unknown_speakers
-    from speechlib.tools.extract_unknown_speakers import extract_unknown_speakers
-
-    wav = _make_wav(tmp_path / "audio.wav", duration_s=12.0)
-    output_dir = tmp_path / "unknown_speakers"
-    mock_pipeline = _make_diarization_mock(["SPEAKER_00", "SPEAKER_01"])
-
-    def fake_recognition(
-        file, voices, segments, wildcards, threshold=SPEAKER_SIMILARITY_THRESHOLD
-    ):
-        spk_tag = segments[0][2] if segments else "SPEAKER_00"
-        return "Agustin" if spk_tag == "SPEAKER_00" else "unknown"
-
-    with (
-        patch(
-            "speechlib.speaker_recognition.get_diarization_pipeline",
-            return_value=mock_pipeline,
-        ),
-        patch(
-            "speechlib.speaker_recognition.speaker_recognition",
-            side_effect=fake_recognition,
-        ),
-    ):
-        unknown_segments = detect_unknown_speakers(wav, "fake_voices", hf_token="tk")
-
-    assert unknown_segments  # al menos un unknown
-
-    clips = extract_unknown_speakers(wav, unknown_segments, output_dir)
-
-    assert clips  # se crearon carpetas
-    for tag, folder in clips.items():
-        assert folder.exists()
-        wavs = list(folder.glob("*.wav"))
-        assert len(wavs) >= 1, f"Sin clips en {folder}"
+# Slice 8: el AT de integracion detect_unknown → extract_unknown_speakers
+# fue eliminado junto con tools/extract_unknown_speakers.py.
+# El nuevo flujo es:
+#   detect_unknown_speakers → core_analysis publica transcript.json + samples/
+#   o, mas directamente:
+#   plan_speaker_samples + extract_speaker_samples desde el dominio nuevo.
+# Tests cubriendo ese flujo viven en:
+#   tests/test_acceptance_sample_extraction.py
+#   tests/test_acceptance_extract_speaker_samples.py

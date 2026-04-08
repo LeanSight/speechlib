@@ -105,33 +105,66 @@ def test_batch_process_finds_audio_extensions(tmp_path):
 
 
 def test_batch_report_lists_unknown_speakers(tmp_path):
-    """El reporte incluye speakers desconocidos extraídos."""
+    """El reporte incluye speakers desconocidos extraidos del transcript.json
+    publicado por core_analysis (Slice 5 cabling).
+
+    Slice 8: ya no se mockea extract_unknown_speakers; el flujo nuevo carga
+    el Transcript del aggregate publicado y usa el sample extraction service.
+    """
+    from speechlib.domain.transcript import (
+        SpeakerIdentity,
+        Transcript,
+        TranscriptSegment,
+    )
     from speechlib.tools.batch_process import batch_process
 
     folder = _make_audio_folder(tmp_path, "session")
     voices = _make_voices_dir(tmp_path)
     unknown_dir = tmp_path / "_unknown"
 
+    # Pre-publicar el transcript.json que core_analysis (mockeado) "habria"
+    # generado, en el artifacts_dir esperado.
+    audio_path = next(folder.glob("*.wav"))
+    artifacts_dir = audio_path.parent / f".{audio_path.stem}"
+    artifacts_dir.mkdir(exist_ok=True)
+    transcript = Transcript(
+        segments=(
+            TranscriptSegment(
+                start_ms=0, end_ms=2500, text="hola",
+                speaker=SpeakerIdentity(
+                    diarization_tag="SPEAKER_00",
+                    recognized_name="Agustin",
+                    similarity=0.7,
+                ),
+            ),
+            TranscriptSegment(
+                start_ms=2500, end_ms=5000, text="soy nuevo",
+                speaker=SpeakerIdentity(diarization_tag="SPEAKER_01"),
+            ),
+        ),
+        audio_path=str(audio_path),
+        language="es",
+    )
+    transcript.save(artifacts_dir / "transcript.json")
+
     with patch("speechlib.tools.batch_process.core_analysis") as mock_ca:
         mock_ca.return_value = [
-            [0.0, 2.0, "hola", "Agustin"],
-            [2.0, 4.0, "soy nuevo", "SPEAKER_01"],
+            [0.0, 2.5, "hola", "Agustin"],
+            [2.5, 5.0, "soy nuevo", "SPEAKER_01"],
         ]
-        with patch(
-            "speechlib.tools.batch_process.extract_unknown_speakers"
-        ) as mock_ext:
-            mock_ext.return_value = {
-                "SPEAKER_01": unknown_dir / "SPEAKER_01_recording_00"
-            }
-            report = batch_process(
-                folders=[folder],
-                voices_folder=voices,
-                language="es",
-                access_token="fake_token",
-                unknown_output_dir=unknown_dir,
-            )
+        report = batch_process(
+            folders=[folder],
+            voices_folder=voices,
+            language="es",
+            access_token="fake_token",
+            unknown_output_dir=unknown_dir,
+            min_unknown_duration_s=2.0,
+            max_unknown_clips=2,
+        )
 
     assert len(report.unknown_speakers) >= 1
+    # Estructura de salida nueva: <unknown>/<audio_stem>/<speaker_label>/clip_NN.wav
+    assert (unknown_dir / audio_path.stem / "SPEAKER_01").is_dir()
 
 
 def test_batch_report_lists_identified_speakers(tmp_path):
