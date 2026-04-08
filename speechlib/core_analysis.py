@@ -39,6 +39,37 @@ from .enhance_audio import enhance_audio
 from .compress_audio import compress_audio
 
 
+def _run_diarization_cached(state: AudioState, access_token: str | None):
+    """Devuelve la annotation pyannote, reutilizando diarization.rttm si existe.
+
+    Recompute si el cache existe pero esta corrupto. Escribe el RTTM cuando
+    recomputa.
+    """
+    rttm_path = state.artifacts_dir / "diarization.rttm"
+
+    if rttm_path.exists():
+        try:
+            return next(iter(_load_rttm(str(rttm_path)).values())), True
+        except Exception as e:
+            print(f"WARNING: could not load diarization.rttm ({e}), recomputing.")
+            rttm_path.unlink(missing_ok=True)
+
+    pipeline = _get_diarization_pipeline(access_token)
+    waveform, sample_rate = torchaudio.load(str(state.working_path))
+    print("running diarization...")
+    with measure("diarization", gpu=True), kmeasure("diarization"):
+        diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate})
+    print("diarization done.")
+    annotation = (
+        diarization.speaker_diarization
+        if hasattr(diarization, "speaker_diarization")
+        else diarization
+    )
+    with open(rttm_path, "w") as f:
+        annotation.write_rttm(f)
+    return annotation, False
+
+
 def _preprocess_audio(file_name: str, *, skip_enhance: bool) -> AudioState:
     """Pipeline de pre-processing del audio fuente.
 
@@ -111,44 +142,9 @@ def core_analysis(
 
     speaker_tags = []
 
-    rttm_path = state.artifacts_dir / "diarization.rttm"
-
-    if rttm_path.exists():
-        try:
-            annotation = next(iter(_load_rttm(str(rttm_path)).values()))
-            print("diarization loaded from cache.")
-        except Exception as e:
-            print(f"WARNING: could not load diarization.rttm ({e}), recomputing.")
-            rttm_path.unlink(missing_ok=True)
-            pipeline = _get_diarization_pipeline(ACCESS_TOKEN)
-            waveform, sample_rate = torchaudio.load(str(state.working_path))
-            print("running diarization...")
-            with measure("diarization", gpu=True), kmeasure("diarization"):
-                diarization = pipeline(
-                    {"waveform": waveform, "sample_rate": sample_rate}
-                )
-            print("diarization done.")
-            annotation = (
-                diarization.speaker_diarization
-                if hasattr(diarization, "speaker_diarization")
-                else diarization
-            )
-            with open(rttm_path, "w") as f:
-                annotation.write_rttm(f)
-    else:
-        pipeline = _get_diarization_pipeline(ACCESS_TOKEN)
-        waveform, sample_rate = torchaudio.load(str(state.working_path))
-        print("running diarization...")
-        with measure("diarization", gpu=True), kmeasure("diarization"):
-            diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate})
-        print("diarization done.")
-        annotation = (
-            diarization.speaker_diarization
-            if hasattr(diarization, "speaker_diarization")
-            else diarization
-        )
-        with open(rttm_path, "w") as f:
-            annotation.write_rttm(f)
+    annotation, from_cache = _run_diarization_cached(state, ACCESS_TOKEN)
+    if from_cache:
+        print("diarization loaded from cache.")
 
     speakers = {}
 
