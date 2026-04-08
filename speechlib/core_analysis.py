@@ -39,6 +39,30 @@ from .enhance_audio import enhance_audio
 from .compress_audio import compress_audio
 
 
+def _regroup_speakers_from_common(common: list) -> dict:
+    """Reconstruye el dict speakers desde common despues de absorb/merge.
+
+    Necesario porque absorb_micro_segments y merge_short_turns mutan common
+    pero no actualizan speakers.
+    """
+    speakers: dict = {}
+    for segment in common:
+        spk = segment[2]
+        if spk not in speakers:
+            speakers[spk] = []
+        speakers[spk].append(segment)
+    return speakers
+
+
+def _group_post_transcription(common_segments: list, *, model_type: str, grouping_mode: str) -> list:
+    """Aplica grouping post-transcripcion solo cuando model_type=faster-whisper."""
+    if model_type != "faster-whisper":
+        return common_segments
+    if grouping_mode == "sentences":
+        return group_by_sentences(common_segments)
+    return group_by_speaker(common_segments)
+
+
 def _publish_domain_artifacts(
     common_segments: list,
     annotation,
@@ -367,12 +391,7 @@ def core_analysis(
     # absorb micro-segments into longer neighbors, then merge same-speaker turns
     common = absorb_micro_segments(common)
     common = merge_short_turns(common)
-    speakers = {}
-    for segment in common:
-        spk = segment[2]
-        if spk not in speakers:
-            speakers[spk] = []
-        speakers[spk].append(segment)
+    speakers = _regroup_speakers_from_common(common)
 
     common_segments = _transcribe_segments(
         state, common, speakers, speaker_map,
@@ -386,12 +405,9 @@ def core_analysis(
     )
     print("transcription done.")
 
-    # group post-transcription segments according to grouping_mode
-    if model_type == "faster-whisper":
-        if grouping_mode == "sentences":
-            common_segments = group_by_sentences(common_segments)
-        else:
-            common_segments = group_by_speaker(common_segments)
+    common_segments = _group_post_transcription(
+        common_segments, model_type=model_type, grouping_mode=grouping_mode
+    )
 
     # writing log file
     with measure("write_log_file"):
