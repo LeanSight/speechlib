@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 from pathlib import Path
 from typing import Union
 import numpy as np
@@ -14,13 +13,8 @@ logger = logging.getLogger(__name__)
 
 SPEAKER_SIMILARITY_THRESHOLD = 0.45
 SPEAKER_SIMILARITY_MIN_MARGIN = 0.10
+MIN_SEGMENT_DURATION_S = 0.5  # turnos pyannote mas cortos rompen pyannote/embedding
 VOICES_SKIP_PREFIX = "_"
-_SPEAKER_TAG_RE = re.compile(r"^SPEAKER_\d+$")
-
-
-def is_unidentified_speaker(speaker: str) -> bool:
-    """True si el speaker no ha sido identificado: tag pyannote o literal 'unknown'."""
-    return speaker == "unknown" or bool(_SPEAKER_TAG_RE.match(speaker))
 
 
 _embedding_model = None
@@ -143,6 +137,12 @@ def speaker_recognition(
     for i, segment in enumerate(segments, 1):
         start_ms = segment[0] * 1000
         end_ms = segment[1] * 1000
+
+        # Slice 12: filtrar turnos muy cortos antes de cortar el audio.
+        # pyannote/embedding rompe con max_pool1d() en chunks < ~0.5s.
+        if (end_ms - start_ms) < MIN_SEGMENT_DURATION_S * 1000:
+            continue
+
         file = (
             folder_name
             + "/"
