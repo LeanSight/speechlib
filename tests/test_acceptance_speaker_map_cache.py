@@ -68,8 +68,12 @@ class TestSpeakerMapCache:
         speaker_map_path = tmp_path / ".audio" / "speaker_map.json"
         assert speaker_map_path.exists(), "speaker_map.json should be saved"
 
-    def test_core_analysis_passes_enhanced_flag_to_speaker_recognition(self, tmp_path):
-        """Cuando enhance está activo, speaker_recognition recibe enhanced=True."""
+    def test_core_analysis_passes_enhanced_flag_to_voice_library_load(self, tmp_path):
+        """Slice 13b: cuando enhance está activo, load_avg_voice_embeddings
+        recibe enhanced=True (la libreria carga embeddings de _enhanced/).
+
+        El path canonico ya no llama speaker_recognition() — usa assign_speakers
+        del dominio puro. El flag enhanced viaja via load_avg_voice_embeddings."""
         from speechlib.core_analysis import core_analysis
 
         audio = _make_wav(tmp_path / "audio.wav", duration_s=10.0)
@@ -83,7 +87,8 @@ class TestSpeakerMapCache:
         mock_diar.speaker_diarization = _make_annotation_mock(["SPEAKER_00"])
         mock_pipeline.return_value = mock_diar
 
-        mock_speaker_rec = MagicMock(return_value="speaker")
+        import numpy as np
+        mock_load_lib = MagicMock(return_value={"speaker": np.ones(192)})
 
         with patch(
             "speechlib.core_analysis._get_diarization_pipeline",
@@ -93,18 +98,25 @@ class TestSpeakerMapCache:
                 "speechlib.core_analysis._load_rttm", side_effect=FileNotFoundError()
             ):
                 with patch(
-                    "speechlib.core_analysis.speaker_recognition", mock_speaker_rec
+                    "speechlib.core_analysis.load_avg_voice_embeddings", mock_load_lib
                 ):
-                    with patch("speechlib.core_analysis.enhance_audio", lambda s: s.model_copy(update={"is_enhanced": True})):
-                        core_analysis(
-                            str(audio), str(voices), str(tmp_path / "logs"), "en",
-                            skip_enhance=False,
-                        )
+                    with patch(
+                        "speechlib.core_analysis._compute_averaged_embeddings_per_tag",
+                        return_value={"SPEAKER_00": np.ones(192)},
+                    ):
+                        with patch(
+                            "speechlib.core_analysis.enhance_audio",
+                            lambda s: s.model_copy(update={"is_enhanced": True}),
+                        ):
+                            core_analysis(
+                                str(audio), str(voices), str(tmp_path / "logs"), "en",
+                                skip_enhance=False,
+                            )
 
-        mock_speaker_rec.assert_called_once()
-        _, kwargs = mock_speaker_rec.call_args
+        mock_load_lib.assert_called_once()
+        _, kwargs = mock_load_lib.call_args
         assert kwargs.get("enhanced") is True, (
-            f"speaker_recognition should receive enhanced=True, got {mock_speaker_rec.call_args}"
+            f"load_avg_voice_embeddings should receive enhanced=True, got {mock_load_lib.call_args}"
         )
 
     def test_speaker_map_cache_skips_recognition(self, tmp_path):
@@ -177,7 +189,12 @@ class TestSpeakerMapCache:
         mock_speaker_rec.assert_not_called()
 
     def test_speaker_map_json_format(self, tmp_path):
-        """JSON has SPEAKER_XX keys with name or unknown_NNN values"""
+        """Slice 13b: JSON tiene SPEAKER_XX como valor cuando ningun voice
+        de la libreria supera threshold. JAMAS aparece el literal "unknown".
+
+        Esto verifica el invariante anti-bug a nivel del speaker_map.json:
+        ningun valor del dict puede ser "unknown" porque el dominio nuevo
+        usa SpeakerIdentity.label que cae al diarization_tag."""
         from speechlib.core_analysis import core_analysis
 
         audio = _make_wav(tmp_path / "audio.wav", duration_s=10.0)
@@ -193,6 +210,14 @@ class TestSpeakerMapCache:
         )
         mock_pipeline.return_value = mock_diar
 
+        # Library con un embedding ortogonal a los tags → no match para nadie
+        import numpy as np
+        no_match_lib = {"someone": np.array([0.0, 0.0, 1.0])}
+        embeddings_by_tag = {
+            "SPEAKER_00": np.array([1.0, 0.0, 0.0]),
+            "SPEAKER_01": np.array([0.0, 1.0, 0.0]),
+        }
+
         with patch(
             "speechlib.core_analysis._get_diarization_pipeline",
             return_value=mock_pipeline,
@@ -201,15 +226,22 @@ class TestSpeakerMapCache:
                 "speechlib.core_analysis._load_rttm", side_effect=FileNotFoundError()
             ):
                 with patch(
-                    "speechlib.core_analysis.speaker_recognition",
-                    return_value="unknown",
+                    "speechlib.core_analysis.load_avg_voice_embeddings",
+                    return_value=no_match_lib,
                 ):
-                    core_analysis(str(audio), str(voices), str(tmp_path / "logs"), "en")
+                    with patch(
+                        "speechlib.core_analysis._compute_averaged_embeddings_per_tag",
+                        return_value=embeddings_by_tag,
+                    ):
+                        core_analysis(str(audio), str(voices), str(tmp_path / "logs"), "en")
 
         speaker_map_path = tmp_path / ".audio" / "speaker_map.json"
         data = json.loads(speaker_map_path.read_text(encoding="utf-8"))
 
         assert "SPEAKER_00" in data
         assert "SPEAKER_01" in data
-        assert data["SPEAKER_00"].startswith("SPEAKER_")
-        assert data["SPEAKER_01"].startswith("SPEAKER_")
+        # Invariante anti-bug: ningun valor es "unknown"
+        assert "unknown" not in data.values()
+        # Sin match -> el value es el SPEAKER_XX original
+        assert data["SPEAKER_00"] == "SPEAKER_00"
+        assert data["SPEAKER_01"] == "SPEAKER_01"

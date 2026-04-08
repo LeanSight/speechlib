@@ -13,7 +13,21 @@ if not hasattr(torchaudio, "list_audio_backends"):
     torchaudio.list_audio_backends = lambda: ["sox"]
 
 from .diarization import get_diarization_pipeline as _get_diarization_pipeline
-from .speaker_recognition import speaker_recognition
+from .speaker_recognition import (
+    MIN_SEGMENT_DURATION_S,
+    SPEAKER_SIMILARITY_MIN_MARGIN,
+    SPEAKER_SIMILARITY_THRESHOLD,
+    _get_inference,
+    load_avg_voice_embeddings,
+    speaker_recognition,
+)
+from .audio_utils import slice_and_save
+from .domain.recognition import assign_speakers
+from .domain.transcript import (
+    SpeakerIdentity,
+    Transcript,
+    TranscriptSegment,
+)
 
 try:
     from pyannote.database.util import load_rttm as _load_rttm
@@ -197,6 +211,58 @@ def _merge_same_speakers(common: list, speakers: dict, speaker_map: dict) -> tup
     return common, speakers, speaker_map
 
 
+def _compute_averaged_embeddings_per_tag(
+    state: AudioState,
+    speakers: dict,
+    *,
+    limit_s: float = 60.0,
+):
+    """Para cada SPEAKER_XX, computa el embedding promedio a partir de chunks.
+
+    Mirroring de la logica canonica de speaker_recognition: per-chunk embedding
+    + mean, filtrando NaN y turnos < MIN_SEGMENT_DURATION_S.
+    """
+    import numpy as np
+
+    inference = _get_inference()
+    folder_name = str(Path(state.working_path).parent / "tmp")
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
+
+    embeddings_by_tag: dict = {}
+    for spk_tag, spk_segments in speakers.items():
+        accumulated_ms = 0
+        embs: list = []
+        for i, segment in enumerate(spk_segments):
+            if accumulated_ms >= limit_s * 1000:
+                break
+            start_ms = segment[0] * 1000
+            end_ms = segment[1] * 1000
+            if (end_ms - start_ms) < MIN_SEGMENT_DURATION_S * 1000:
+                continue
+            chunk = (
+                folder_name + "/"
+                + os.path.splitext(os.path.basename(str(state.working_path)))[0]
+                + f"_{spk_tag}_chunk_{i}.wav"
+            )
+            try:
+                slice_and_save(str(state.working_path), start_ms, end_ms, chunk)
+                arr = np.asarray(inference(chunk)).flatten()
+                if not np.isnan(arr).any():
+                    embs.append(arr)
+            except Exception as exc:
+                print(f"Error extracting embedding from segment: {exc}")
+            finally:
+                try:
+                    os.remove(chunk)
+                except OSError:
+                    pass
+            accumulated_ms += end_ms - start_ms
+        if embs:
+            embeddings_by_tag[spk_tag] = np.mean(embs, axis=0)
+    return embeddings_by_tag
+
+
 def _run_speaker_recognition_cached(
     state: AudioState,
     voices_folder: str,
@@ -205,13 +271,18 @@ def _run_speaker_recognition_cached(
 ) -> dict:
     """Identifica cada SPEAKER_XX contra la libreria de voces, con cache.
 
-    Si artifacts_dir/speaker_map.json existe, lo carga. Si no, corre
-    speaker_recognition() por cada tag y guarda el cache.
+    Si artifacts_dir/speaker_map.json existe, lo carga. Si no, computa
+    embeddings por tag y delega en assign_speakers (dominio puro). El
+    resultado se serializa al formato legacy {tag: name_or_tag}.
 
-    Aplica el hack historico (raiz del bug original): cuando el reconocimiento
-    devuelve "unknown", lo reescribe al SPEAKER_XX para que el VTT writer no
-    muestre el literal. Slice 13b lo eliminara cuando core_analysis use
-    assign_speakers directo.
+    Slice 13b: elimino el hack historico de "unknown" -> tag. Ahora la
+    transformacion la hace SpeakerIdentity.label por construccion del
+    dominio: si recognized_name es None, label cae al diarization_tag.
+    Es estructuralmente imposible que el speaker_map.json contenga el
+    literal "unknown".
+
+    Mantiene comportamiento observable identico para los consumidores
+    legacy de speaker_map.json.
     """
     speaker_map_path = state.artifacts_dir / "speaker_map.json"
 
@@ -220,21 +291,50 @@ def _run_speaker_recognition_cached(
         print("speaker_map loaded from cache.")
         return speaker_map
 
-    speaker_map: dict = {}
     start_time = int(time.time())
     print("running speaker recognition...")
-    for spk_tag, spk_segments in speakers.items():
-        spk_name = speaker_recognition(
-            str(state.working_path), voices_folder, spk_segments,
-            enhanced=state.is_enhanced,
-        )
-        speaker_map[spk_tag] = spk_name
+
+    voice_library = load_avg_voice_embeddings(
+        Path(voices_folder), enhanced=state.is_enhanced
+    )
+    embeddings_by_tag = _compute_averaged_embeddings_per_tag(state, speakers)
+
+    transcript = Transcript(
+        segments=tuple(
+            TranscriptSegment(
+                start_ms=int(speakers[tag][0][0] * 1000),
+                end_ms=int(speakers[tag][0][1] * 1000),
+                text="",
+                speaker=SpeakerIdentity(diarization_tag=tag),
+            )
+            for tag in speaker_tags
+            if tag in embeddings_by_tag
+        ),
+        audio_path=str(state.working_path),
+        language="",
+    )
+
+    relabeled = assign_speakers(
+        transcript,
+        embeddings_by_tag,
+        voice_library,
+        threshold=SPEAKER_SIMILARITY_THRESHOLD,
+        min_margin=SPEAKER_SIMILARITY_MIN_MARGIN,
+    )
+
     elapsed = int(time.time() - start_time)
     print(f"speaker recognition done. Time taken: {elapsed} seconds.")
 
-    # Hack historico: "unknown" -> tag pyannote para que el VTT no muestre literal
+    # Construir speaker_map legacy desde el aggregate del dominio.
+    # SpeakerIdentity.label devuelve recognized_name OR diarization_tag,
+    # NUNCA el literal "unknown" — el bug es estructuralmente imposible.
+    speaker_map: dict = {
+        seg.speaker.diarization_tag: seg.speaker.label
+        for seg in relabeled.segments
+    }
+    # Tags sin embedding (turnos demasiado cortos): preservar como SPEAKER_XX
     for spk_tag in speaker_tags:
-        if speaker_map.get(spk_tag) == "unknown":
+        if spk_tag not in speaker_map:
             speaker_map[spk_tag] = spk_tag
 
     speaker_map_path.write_text(
