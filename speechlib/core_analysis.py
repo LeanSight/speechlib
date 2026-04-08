@@ -39,6 +39,55 @@ from .enhance_audio import enhance_audio
 from .compress_audio import compress_audio
 
 
+def _transcribe_segments(
+    state: AudioState,
+    common: list,
+    speakers: dict,
+    speaker_map: dict,
+    *,
+    language: str,
+    model_size: str,
+    model_type: str,
+    quantization: bool,
+    custom_model_path,
+    hf_model_id,
+    aai_api_key,
+) -> list:
+    """Transcribe segmentos del audio. Soporta faster-whisper (alineado) y
+    el path generico (segmentacion por speaker)."""
+    print("running transcription...")
+    with measure("transcription", gpu=True):
+        if model_type == "faster-whisper":
+            return transcribe_full_aligned(
+                str(state.working_path), common, language, model_size, quantization
+            )
+
+        for spk_tag, spk_segments in speakers.items():
+            speakers[spk_tag] = wav_file_segmentation(
+                str(state.working_path),
+                spk_segments,
+                language,
+                model_size,
+                model_type,
+                quantization,
+                custom_model_path,
+                hf_model_id,
+                aai_api_key,
+            )
+
+    common_segments = []
+    for item in common:
+        speaker = item[2]
+        start = item[0]
+        end = item[1]
+        for spk_tag, spk_segments in speakers.items():
+            if speaker == speaker_map.get(spk_tag, spk_tag):
+                for segment in spk_segments:
+                    if start == segment[0] and end == segment[1]:
+                        common_segments.append([start, end, segment[2], speaker])
+    return common_segments
+
+
 def _merge_same_speakers(common: list, speakers: dict, speaker_map: dict) -> tuple:
     """Fusiona segmentos cuando dos SPEAKER_XX mapean al mismo nombre.
 
@@ -278,42 +327,17 @@ def core_analysis(
             speakers[spk] = []
         speakers[spk].append(segment)
 
-    # transcribing the texts differently according to speaker
-    print("running transcription...")
-    with measure("transcription", gpu=True):
-        if model_type == "faster-whisper":
-            common_segments = transcribe_full_aligned(
-                str(state.working_path), common, language, modelSize, quantization
-            )
-        else:
-            for spk_tag, spk_segments in speakers.items():
-                spk = speaker_map.get(spk_tag, spk_tag)
-                segment_out = wav_file_segmentation(
-                    str(state.working_path),
-                    spk_segments,
-                    language,
-                    modelSize,
-                    model_type,
-                    quantization,
-                    custom_model_path,
-                    hf_model_id,
-                    aai_api_key,
-                )
-                speakers[spk_tag] = segment_out
+    common_segments = _transcribe_segments(
+        state, common, speakers, speaker_map,
+        language=language,
+        model_size=modelSize,
+        model_type=model_type,
+        quantization=quantization,
+        custom_model_path=custom_model_path,
+        hf_model_id=hf_model_id,
+        aai_api_key=aai_api_key,
+    )
     print("transcription done.")
-
-    if model_type != "faster-whisper":
-        common_segments = []
-        for item in common:
-            speaker = item[2]
-            start = item[0]
-            end = item[1]
-
-            for spk_tag, spk_segments in speakers.items():
-                if speaker == speaker_map.get(spk_tag, spk_tag):
-                    for segment in spk_segments:
-                        if start == segment[0] and end == segment[1]:
-                            common_segments.append([start, end, segment[2], speaker])
 
     # group post-transcription segments according to grouping_mode
     if model_type == "faster-whisper":
