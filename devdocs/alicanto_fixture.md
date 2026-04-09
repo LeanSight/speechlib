@@ -10,8 +10,8 @@
 **Artefactos cacheados**: `C:\workspace\@recordings\20260402 Alicanto\.Voz 260402_151510\`
 - `16k.wav` (374 MB) — preprocesado mono 16kHz
 - `enhanced.wav` (374 MB) — MossFormer2 enhanced
-- `diarization.rttm` — pyannote 3.1 (backup en `diarization.3.1.rttm.bak` durante experimento de upgrade)
-- `speaker_map.json` — recognition contra library (backup en `speaker_map.3.1.json.bak`)
+- `diarization.rttm` — pyannote community-1 (backup 3.1 en `diarization.3.1.rttm.bak`)
+- `speaker_map.json` — recognition contra library, threshold 0.55 (backup 3.1 en `speaker_map.3.1.json.bak`)
 - `transcript_es.vtt` — whisper large-v3-turbo
 - `transcript.json` — aggregate del nuevo dominio (Slice 5+)
 - `samples/` — clips por speaker (Slice 16+18)
@@ -44,9 +44,34 @@ Cualquier estrategia nueva de speaker recognition debe pasar por este fixture an
 
 Total: 6 personas reales + audio de un video (mujeres, ignorar) + ruido ambiental.
 
-## Ground truth de los clips extraídos
+## Ground truth community-1 (modelo actual, 2026-04-09)
 
-Estos clips son el output del pipeline (Slice 18 RAW turns) sobre el cache pyannote 3.1. El usuario los caracterizó manualmente. **Ninguna prueba de un modelo o estrategia nueva debe declararse exitosa sin reproducir este mismo nivel de granularidad de validación.**
+Mapping confirmado por el usuario escuchando clips de `samples/por_nombrar/`:
+
+| Tag community-1 | Persona | Segmentos | Tiempo total |
+|---|---|---|---|
+| SPEAKER_00 | **Pamela Falconi** ✓ library | 140 | ~8 min |
+| SPEAKER_01 | **Agustin Villena** ✓ library | 745 | ~78 min |
+| SPEAKER_02 | Marcos | 246 | ~22 min |
+| SPEAKER_03 | Orlando | 361 | ~34 min |
+| SPEAKER_04 | Nicolas Loira | 498 | ~25 min |
+| SPEAKER_05 | Daniel | 122 | ~8 min |
+
+**6 clusters = 6 personas reales**. Community-1 clavó el conteo exacto de speakers. No hay clusters de ruido, video ni fragmentación (mejora significativa vs 3.1 que producía ~8-10 clusters con mezcla).
+
+**Speaker recognition (threshold 0.55, min_margin 0.10)**:
+- Pamela: sim=0.720, margen=0.288 → identificada ✅
+- Agustin: sim=0.719, margen=0.231 → identificado ✅
+- Marcos: sim=0.509 < 0.55 → no identificado (correcto, no está en library) ✅
+- Orlando: sim=0.319 → no identificado ✅
+- Nicolas: sim=0.572, margen=0.064 < 0.10 → rechazado por margen ✅
+- Daniel: sim=0.510 < 0.55 → no identificado ✅
+
+---
+
+## Ground truth pyannote 3.1 (histórico, pre-upgrade)
+
+Estos clips son el output del pipeline (Slice 18 RAW turns) sobre el cache pyannote 3.1. El usuario los caracterizó manualmente. **Los SPEAKER_XX de esta sección NO corresponden a los de community-1 (numeración diferente).**
 
 ### Speakers identificados via library
 
