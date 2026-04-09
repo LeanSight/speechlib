@@ -1,7 +1,10 @@
+import logging
 import os
 import json
 import threading
 import time
+
+logger = logging.getLogger(__name__)
 from .wav_segmenter import wav_file_segmentation
 from .transcribe import transcribe_full_aligned
 from .step_timer import measure, print_report
@@ -135,8 +138,13 @@ def _publish_domain_artifacts(
                 audio_path=state.working_path,
                 output_dir=state.artifacts_dir / "samples",
             )
-    except Exception as exc:
-        print(f"WARNING: domain transcript publish failed ({exc}). Legacy output OK.")
+    except Exception:
+        # Smell 3: log full traceback (no swallow silencioso). El legacy output
+        # sigue funcionando, pero ahora podemos diagnosticar regresiones de la
+        # nueva feature de Slice 5 con stack frames + line numbers.
+        logger.exception(
+            "domain transcript publish failed; legacy output continues unaffected"
+        )
 
 
 def _transcribe_segments(
