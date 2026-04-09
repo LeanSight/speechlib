@@ -66,9 +66,7 @@ class TestOutlierRejection:
         Con: max_clips=6
         Resultado: el clip ortogonal NO se copia
         """
-        from speechlib.tools.enroll_speaker import _reject_outliers
-
-        clips = [tmp_path / f"clip{i}.wav" for i in range(6)]
+        from speechlib.domain.enrollment import reject_outlier_indices
 
         import numpy as np
 
@@ -81,26 +79,24 @@ class TestOutlierRejection:
             np.array([0.0, 1.0, 0.0]),
         ]
 
-        result_clips, result_embeddings = _reject_outliers(clips, embeddings)
+        kept = reject_outlier_indices(embeddings)
 
-        assert len(result_clips) == 5
-        assert tmp_path / "clip5.wav" not in result_clips
+        assert len(kept) == 5
+        assert 5 not in kept  # outlier ortogonal descartado
 
     def test_reject_outliers_keeps_all_when_std_zero(self, tmp_path):
         """Caso borde: todos los clips son idénticos (std=0)
         Resultado: ninguno descartado
         """
-        from speechlib.tools.enroll_speaker import _reject_outliers
-
-        clips = [tmp_path / f"clip{i}.wav" for i in range(3)]
+        from speechlib.domain.enrollment import reject_outlier_indices
 
         import numpy as np
 
         embeddings = [np.array([1.0, 0.0, 0.0])] * 3
 
-        result_clips, result_embeddings = _reject_outliers(clips, embeddings)
+        kept = reject_outlier_indices(embeddings)
 
-        assert len(result_clips) == 3
+        assert len(kept) == 3
 
 
 class TestDiversitySelection:
@@ -111,9 +107,7 @@ class TestDiversitySelection:
         Con: max_clips=3
         Resultado: al menos 1 de los distintos está incluido
         """
-        from speechlib.tools.enroll_speaker import _select_diverse
-
-        clips = [tmp_path / f"clip{i}.wav" for i in range(6)]
+        from speechlib.domain.enrollment import select_diverse_indices
 
         import numpy as np
 
@@ -126,11 +120,10 @@ class TestDiversitySelection:
             np.array([0.0, 0.0, 1.0]),
         ]
 
-        result = _select_diverse(clips, embeddings, max_clips=3)
+        indices = select_diverse_indices(embeddings, max_count=3)
 
-        assert len(result) == 3
-        result_names = {r.name for r in result}
-        assert "clip4.wav" in result_names or "clip5.wav" in result_names
+        assert len(indices) == 3
+        assert 4 in indices or 5 in indices  # al menos 1 "distinto"
 
 
 class TestVoicesLibraryEnrollment:

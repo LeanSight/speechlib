@@ -16,7 +16,8 @@ from pathlib import Path
 
 import soundfile as sf
 
-from speechlib.speaker_recognition import get_embedding, cosine_similarity
+from speechlib.speaker_recognition import get_embedding
+from speechlib.domain.enrollment import reject_outlier_indices, select_diverse_indices
 
 
 def get_audio_duration(audio_path: Path) -> float:
@@ -55,79 +56,6 @@ def select_clips(
     return copied
 
 
-def _reject_outliers(
-    clips: list[Path],
-    embeddings: list,
-    sigma: float = 2.0,
-) -> tuple[list[Path], list]:
-    """Reject outlier clips based on distance from centroid. Returns (filtered_clips, filtered_embeddings)."""
-    import numpy as np
-
-    if len(clips) <= 1:
-        return clips, embeddings
-
-    embeddings_arr = [e.flatten() for e in embeddings]
-    centroid = np.mean(embeddings_arr, axis=0)
-    distances = [1.0 - cosine_similarity(e, centroid) for e in embeddings_arr]
-
-    std = np.std(distances)
-    if std == 0:
-        return clips, embeddings
-
-    threshold = np.mean(distances) + sigma * std
-
-    filtered_clips = []
-    filtered_embeddings = []
-    for c, e, d in zip(clips, embeddings, distances):
-        if d <= threshold:
-            filtered_clips.append(c)
-            filtered_embeddings.append(e)
-
-    return filtered_clips, filtered_embeddings
-
-
-def _select_diverse(
-    clips: list[Path],
-    embeddings: list,
-    max_clips: int,
-) -> list[Path]:
-    """Select diverse clips using greedy algorithm."""
-    import numpy as np
-
-    if len(clips) <= max_clips:
-        return clips
-
-    embeddings_arr = [e.flatten() for e in embeddings]
-    centroid = np.mean(embeddings_arr, axis=0)
-
-    distances_to_centroid = [
-        1.0 - cosine_similarity(e, centroid) for e in embeddings_arr
-    ]
-    selected_indices = [int(np.argmin(distances_to_centroid))]
-
-    for _ in range(max_clips - 1):
-        best_idx = None
-        best_min_dist = -1
-
-        for i, emb in enumerate(embeddings_arr):
-            if i in selected_indices:
-                continue
-
-            min_dist = min(
-                1.0 - cosine_similarity(emb, embeddings_arr[j])
-                for j in selected_indices
-            )
-
-            if min_dist > best_min_dist:
-                best_min_dist = min_dist
-                best_idx = i
-
-        if best_idx is not None:
-            selected_indices.append(best_idx)
-
-    return [clips[i] for i in selected_indices]
-
-
 def enroll_speaker(
     clips_dir: Path,
     speaker_name: str,
@@ -151,8 +79,12 @@ def enroll_speaker(
 
     embeddings = [get_embedding(str(c)) for c in valid_clips]
 
-    filtered_clips, filtered_embeddings = _reject_outliers(valid_clips, embeddings)
-    selected = _select_diverse(filtered_clips, filtered_embeddings, max_clips)
+    kept_indices = reject_outlier_indices(embeddings)
+    filtered_clips = [valid_clips[i] for i in kept_indices]
+    filtered_embeddings = [embeddings[i] for i in kept_indices]
+
+    diverse_indices = select_diverse_indices(filtered_embeddings, max_clips)
+    selected = [filtered_clips[i] for i in diverse_indices]
 
     speaker_dir = voices_dir / speaker_name
     speaker_dir.mkdir(parents=True, exist_ok=True)
