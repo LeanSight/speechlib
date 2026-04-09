@@ -26,7 +26,7 @@ from .speaker_recognition import (
     load_avg_voice_embeddings,
 )
 from .audio_utils import slice_and_save
-from .domain.recognition import assign_speakers
+from .domain.recognition import assign_speakers, average_embeddings
 from .domain.transcript import (
     SpeakerIdentity,
     Transcript,
@@ -244,8 +244,9 @@ def _compute_averaged_embeddings_per_tag(
 ):
     """Para cada SPEAKER_XX, computa el embedding promedio a partir de chunks.
 
-    Mirroring de la logica canonica de speaker_recognition: per-chunk embedding
-    + mean, filtrando NaN y turnos < MIN_SEGMENT_DURATION_S.
+    Application service: orquesta el I/O (slice del audio + inference).
+    La logica de aggregation (promedio + filtro NaN) vive en la funcion
+    pura speechlib.domain.recognition.average_embeddings (Smell 6 fix).
     """
     import numpy as np
 
@@ -257,7 +258,7 @@ def _compute_averaged_embeddings_per_tag(
     embeddings_by_tag: dict = {}
     for spk_tag, spk_segments in speakers.items():
         accumulated_ms = 0
-        embs: list = []
+        per_chunk_embeddings: list = []
         for i, segment in enumerate(spk_segments):
             if accumulated_ms >= limit_s * 1000:
                 break
@@ -272,9 +273,7 @@ def _compute_averaged_embeddings_per_tag(
             )
             try:
                 slice_and_save(str(state.working_path), start_ms, end_ms, chunk)
-                arr = np.asarray(inference(chunk)).flatten()
-                if not np.isnan(arr).any():
-                    embs.append(arr)
+                per_chunk_embeddings.append(np.asarray(inference(chunk)))
             except Exception as exc:
                 print(f"Error extracting embedding from segment: {exc}")
             finally:
@@ -283,8 +282,9 @@ def _compute_averaged_embeddings_per_tag(
                 except OSError:
                     pass
             accumulated_ms += end_ms - start_ms
-        if embs:
-            embeddings_by_tag[spk_tag] = np.mean(embs, axis=0)
+        averaged = average_embeddings(per_chunk_embeddings)
+        if averaged is not None:
+            embeddings_by_tag[spk_tag] = averaged
     return embeddings_by_tag
 
 

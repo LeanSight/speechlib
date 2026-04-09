@@ -22,6 +22,30 @@ import numpy as np
 from .transcript import SpeakerIdentity, Transcript
 
 
+def average_embeddings(embeddings: list[np.ndarray]) -> Optional[np.ndarray]:
+    """Promedia una lista de embeddings, filtrando los que contengan NaN.
+
+    Funcion pura del dominio: cero I/O. Reemplaza la logica duplicada que
+    vivia inline en core_analysis._compute_averaged_embeddings_per_tag y
+    en speaker_recognition.speaker_recognition (legacy borrado en Slice 15).
+
+    Args:
+        embeddings: lista de ndarray (cualquier shape; se aplanan).
+
+    Returns:
+        ndarray promedio de los embeddings VALIDOS (sin NaN), o None si
+        no hay ninguno valido.
+    """
+    valid: list[np.ndarray] = []
+    for emb in embeddings:
+        arr = np.asarray(emb).flatten()
+        if not np.isnan(arr).any():
+            valid.append(arr)
+    if not valid:
+        return None
+    return np.mean(valid, axis=0)
+
+
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     a = np.asarray(a, dtype=np.float64).flatten()
     b = np.asarray(b, dtype=np.float64).flatten()
