@@ -96,7 +96,8 @@ def compressed_result(tmp_path_factory, baseline_time):
     elapsed = time.perf_counter() - t0
     print(f"\n[compress] con compress: {elapsed:.1f}s")
 
-    m4a_path = tmp_audio.with_suffix(".m4a")
+    stem = tmp_audio.stem.strip()
+    m4a_path = tmp_audio.parent / f"{stem}_limpio.m4a"
     return segments, m4a_path, tmp_audio, baseline_time, elapsed
 
 
@@ -148,8 +149,9 @@ def test_no_compressed_file_by_default(tmp_path):
         skip_enhance=True,
     )
 
-    m4a_path = tmp_audio.with_suffix(".m4a")
-    assert not m4a_path.exists(), f"Se encontró .m4a sin compress=True: {m4a_path}"
+    stem = tmp_audio.stem.strip()
+    m4a_path = tmp_audio.parent / f"{stem}_limpio.m4a"
+    assert not m4a_path.exists(), f"Se encontro .m4a sin compress=True: {m4a_path}"
 
 
 @needs_env

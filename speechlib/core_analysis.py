@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import shutil
 import threading
 import time
 
@@ -393,6 +394,17 @@ def _run_diarization_cached(state: AudioState, access_token: str | None):
     return annotation, False
 
 
+def _publish_to_source_folder(state: AudioState, language: str, output_format: str) -> None:
+    """Copia outputs finales al source folder con naming _limpio."""
+    source_dir = state.source_path.parent
+    stem = state.source_path.stem.strip()
+    ext = "vtt" if output_format == "vtt" else "txt"
+
+    transcript_src = state.artifacts_dir / f"transcript_{language}.{ext}"
+    if transcript_src.exists():
+        shutil.copy2(transcript_src, source_dir / f"{stem}_limpio.{ext}")
+
+
 def _preprocess_audio(file_name: str, *, skip_enhance: bool) -> AudioState:
     """Pipeline de pre-processing del audio fuente.
 
@@ -458,7 +470,7 @@ def core_analysis(
     if compress:
         compress_thread = threading.Thread(
             target=compress_audio,
-            args=(state.working_path, state.source_path.with_suffix(".m4a")),
+            args=(state.working_path, state.source_path.parent / f"{state.source_path.stem.strip()}_limpio.m4a"),
             daemon=True,
         )
         compress_thread.start()
@@ -521,6 +533,8 @@ def core_analysis(
     # Wait for background compression to finish
     if compress_thread is not None:
         compress_thread.join()
+
+    _publish_to_source_folder(state, language, output_format)
 
     print_report()
     kprint_report()
