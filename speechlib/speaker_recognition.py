@@ -22,12 +22,13 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-SPEAKER_SIMILARITY_THRESHOLD = 0.50
+SPEAKER_SIMILARITY_THRESHOLD = 0.55
 SPEAKER_SIMILARITY_MIN_MARGIN = 0.10
-# Threshold subido de 0.45 -> 0.50 tras descubrir falso positivo en Alicanto
-# (SPEAKER_02 era falsamente identificado como "AA - Cristian Ruiz" sim=0.498).
-# Pamela (0.71) y Agustin (0.72) siguen pasando holgadamente. Validado en
-# tests/test_acceptance_pamela_alicanto_recognition.py.
+# Threshold subido de 0.45 -> 0.55 tras descubrir falso positivo en Alicanto.
+# SPEAKER_02 sim=0.509 (con rounding) falsamente matcheaba "Cristian Ruiz".
+# 0.55 rechaza todos los falsos positivos: SPEAKER_02 (0.509), SPEAKER_05
+# (0.510), SPEAKER_04 (0.572 rechazado por margin 0.064 < 0.10).
+# Pamela (0.72) y Agustin (0.72) pasan holgadamente.
 MIN_SEGMENT_DURATION_S = 0.5  # turnos pyannote mas cortos rompen pyannote/embedding
 VOICES_SKIP_PREFIX = "_"
 

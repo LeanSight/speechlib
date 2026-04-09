@@ -38,7 +38,10 @@ def test_pamela_cluster_should_match_library():
 
     from pyannote.database.util import load_rttm
     from speechlib.audio_state import AudioState
-    from speechlib.core_analysis import _compute_averaged_embeddings_per_tag
+    from speechlib.core_analysis import (
+        _build_speaker_groups,
+        _compute_averaged_embeddings_per_tag,
+    )
     from speechlib.domain.recognition import _best_match
     from speechlib.speaker_recognition import (
         SPEAKER_SIMILARITY_MIN_MARGIN,
@@ -48,13 +51,9 @@ def test_pamela_cluster_should_match_library():
 
     # Load community-1 RTTM (cached)
     annotation = next(iter(load_rttm(str(RTTM)).values()))
-    speakers = {}
-    for turn, _, tag in annotation.itertracks(yield_label=True):
-        speakers.setdefault(tag, []).append([turn.start, turn.end, tag])
+    # Usar _build_speaker_groups para que el rounding sea identico al pipeline real
+    _, speakers, _, _ = _build_speaker_groups(annotation)
 
-    # Find which SPEAKER_XX has the most segments — likely a "talking person"
-    # Pamela in 3.1 was identified, so she should be a real cluster here
-    # We don't know which SPEAKER_XX is Pamela in community-1, so test ALL of them
     state = AudioState(
         source_path=ENHANCED,
         working_path=ENHANCED,
@@ -98,7 +97,10 @@ def test_full_speaker_map_after_select_segments_fix():
 
     from pyannote.database.util import load_rttm
     from speechlib.audio_state import AudioState
-    from speechlib.core_analysis import _compute_averaged_embeddings_per_tag
+    from speechlib.core_analysis import (
+        _build_speaker_groups,
+        _compute_averaged_embeddings_per_tag,
+    )
     from speechlib.domain.recognition import _best_match
     from speechlib.speaker_recognition import (
         SPEAKER_SIMILARITY_MIN_MARGIN,
@@ -107,9 +109,8 @@ def test_full_speaker_map_after_select_segments_fix():
     )
 
     annotation = next(iter(load_rttm(str(RTTM)).values()))
-    speakers = {}
-    for turn, _, tag in annotation.itertracks(yield_label=True):
-        speakers.setdefault(tag, []).append([turn.start, turn.end, tag])
+    # Usar _build_speaker_groups para que el rounding sea identico al pipeline real
+    _, speakers, _, _ = _build_speaker_groups(annotation)
 
     state = AudioState(
         source_path=ENHANCED, working_path=ENHANCED,

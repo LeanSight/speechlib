@@ -44,9 +44,9 @@ def _make_transcript(*tags):
     )
 
 
-def test_default_threshold_is_050():
+def test_default_threshold_is_055():
     from speechlib.speaker_recognition import SPEAKER_SIMILARITY_THRESHOLD
-    assert SPEAKER_SIMILARITY_THRESHOLD == 0.50
+    assert SPEAKER_SIMILARITY_THRESHOLD == 0.55
 
 
 def test_assign_speakers_rejects_borderline_match_with_min_margin():
