@@ -58,21 +58,6 @@ from .enhance_audio import enhance_audio
 from .compress_audio import compress_audio
 
 
-def _regroup_speakers_from_common(common: list) -> dict:
-    """Reconstruye el dict speakers desde common despues de absorb/merge.
-
-    Necesario porque absorb_micro_segments y merge_short_turns mutan common
-    pero no actualizan speakers.
-    """
-    speakers: dict = {}
-    for segment in common:
-        spk = segment[2]
-        if spk not in speakers:
-            speakers[spk] = []
-        speakers[spk].append(segment)
-    return speakers
-
-
 def _group_post_transcription(common_segments: list, *, model_type: str, grouping_mode: str) -> list:
     """Aplica grouping post-transcripcion solo cuando model_type=faster-whisper."""
     if model_type != "faster-whisper":
@@ -153,7 +138,6 @@ def _publish_domain_artifacts(
 def _transcribe_segments(
     state: AudioState,
     common: list,
-    speakers: dict,
     speaker_map: dict,
     *,
     language: str,
@@ -165,13 +149,25 @@ def _transcribe_segments(
     aai_api_key,
 ) -> list:
     """Transcribe segmentos del audio. Soporta faster-whisper (alineado) y
-    el path generico (segmentacion por speaker)."""
+    el path generico (segmentacion por speaker).
+
+    Smell 2: para el path faster-whisper (default) NO necesitamos el dict
+    `speakers` — solo `common`. Para el path generico, lo regeneramos
+    in-line (era _regroup_speakers_from_common, ahora inlined porque solo
+    se usa aqui) y eliminamos el helper top-level.
+    """
     print("running transcription...")
     with measure("transcription", gpu=True):
         if model_type == "faster-whisper":
             return transcribe_full_aligned(
                 str(state.working_path), common, language, model_size, quantization
             )
+
+        # Path generico: regenerar speakers desde common (post absorb/merge)
+        speakers: dict = {}
+        for segment in common:
+            spk = segment[2]
+            speakers.setdefault(spk, []).append(segment)
 
         for spk_tag, spk_segments in speakers.items():
             speakers[spk_tag] = wav_file_segmentation(
@@ -485,10 +481,12 @@ def core_analysis(
     # absorb micro-segments into longer neighbors, then merge same-speaker turns
     common = absorb_micro_segments(common)
     common = merge_short_turns(common)
-    speakers = _regroup_speakers_from_common(common)
 
+    # Smell 2: dejamos de regenerar `speakers` aqui — _transcribe_segments lo
+    # regenera in-line solo cuando el path generico (non-faster-whisper) lo
+    # necesita. faster-whisper (default) opera solo sobre `common`.
     common_segments = _transcribe_segments(
-        state, common, speakers, speaker_map,
+        state, common, speaker_map,
         language=language,
         model_size=modelSize,
         model_type=model_type,
