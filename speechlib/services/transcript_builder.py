@@ -22,6 +22,35 @@ from typing import Iterable, Optional
 from ..domain.transcript import SpeakerIdentity, Transcript, TranscriptSegment
 
 
+def apply_speaker_map_to_segments(
+    common_segments: list,
+    speaker_map: dict[str, str],
+) -> list:
+    """Aplica el speaker_map a una lista de segmentos legacy [start, end, label].
+
+    Funcion pura: devuelve una lista NUEVA con cada label rewritten al
+    nombre mapeado (cuando existe en speaker_map). Los labels no mapeados
+    se preservan tal cual.
+
+    Reemplaza la parte util de _merge_same_speakers de core_analysis (Smell 1).
+    Las mutaciones de `speakers` y `speaker_map` que el legacy hacia eran
+    DEAD CODE: speakers se regenera 2 lineas despues via
+    _regroup_speakers_from_common, y speaker_map se usa solo via
+    .get(name, name) que nunca toca las claves borradas.
+
+    Args:
+        common_segments: lista de [start, end, label] (no se muta).
+        speaker_map: dict tag -> name (no se muta).
+
+    Returns:
+        Lista nueva con [start, end, mapped_label] por cada segmento.
+    """
+    return [
+        [s[0], s[1], speaker_map.get(s[2], s[2])]
+        for s in common_segments
+    ]
+
+
 def _find_best_overlap_tag(
     annotation_turns: list[tuple[float, float, str]],
     start_s: float,

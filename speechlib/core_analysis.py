@@ -27,6 +27,7 @@ from .speaker_recognition import (
 )
 from .audio_utils import slice_and_save
 from .domain.recognition import assign_speakers, average_embeddings
+from .services.transcript_builder import apply_speaker_map_to_segments
 from .domain.transcript import (
     SpeakerIdentity,
     Transcript,
@@ -196,44 +197,6 @@ def _transcribe_segments(
                     if start == segment[0] and end == segment[1]:
                         common_segments.append([start, end, segment[2], speaker])
     return common_segments
-
-
-def _merge_same_speakers(common: list, speakers: dict, speaker_map: dict) -> tuple:
-    """Fusiona segmentos cuando dos SPEAKER_XX mapean al mismo nombre.
-
-    - Reescribe common[i][2] de SPEAKER_XX a recognized_name via speaker_map.
-    - Si dos tags mapean al mismo nombre, mueve sus segmentos al primero y
-      elimina el segundo de speakers + speaker_map.
-
-    Mutating helper: modifica common, speakers, speaker_map in-place.
-    Slice 13b lo reemplazara con merge_same_speaker_identity() puro.
-    """
-    keys_to_remove: list = []
-    merged: list = []
-
-    for spk_tag1, spk_segments1 in speakers.items():
-        for spk_tag2, spk_segments2 in speakers.items():
-            if (
-                spk_tag1 not in merged
-                and spk_tag2 not in merged
-                and spk_tag1 != spk_tag2
-                and speaker_map[spk_tag1] == speaker_map[spk_tag2]
-            ):
-                for segment in spk_segments2:
-                    speakers[spk_tag1].append(segment)
-                merged.append(spk_tag1)
-                merged.append(spk_tag2)
-                keys_to_remove.append(spk_tag2)
-
-    # Reescribir common con los nombres mapeados
-    for segment in common:
-        segment[2] = speaker_map[segment[2]]
-
-    for key in keys_to_remove:
-        del speakers[key]
-        del speaker_map[key]
-
-    return common, speakers, speaker_map
 
 
 def _compute_averaged_embeddings_per_tag(
@@ -511,7 +474,13 @@ def core_analysis(
             state, voices_folder, speakers, speaker_tags
         )
 
-    common, speakers, speaker_map = _merge_same_speakers(common, speakers, speaker_map)
+    # Smell 1: reemplaza _merge_same_speakers (legacy mutating helper) con
+    # apply_speaker_map_to_segments (funcion pura). Las mutaciones de
+    # `speakers` y `speaker_map` que el legacy hacia eran DEAD CODE — speakers
+    # se regenera 2 lineas abajo via _regroup_speakers_from_common, y
+    # speaker_map se usa solo via .get(name, name) que nunca toca las claves
+    # borradas.
+    common = apply_speaker_map_to_segments(common, speaker_map)
 
     # absorb micro-segments into longer neighbors, then merge same-speaker turns
     common = absorb_micro_segments(common)
