@@ -92,6 +92,7 @@ def _publish_domain_artifacts(
         from .domain.sample_extraction import plan_speaker_samples
         from .services.extract_samples import extract_speaker_samples
         from .services.transcript_builder import (
+            build_transcript_from_annotation_turns,
             build_transcript_from_legacy_segments,
         )
 
@@ -99,6 +100,10 @@ def _publish_domain_artifacts(
             (turn.start, turn.end, tag)
             for turn, _, tag in annotation.itertracks(yield_label=True)
         ]
+
+        # Transcript readable: usa los segmentos post-merge/post-grouping
+        # del legacy. Buenos para texto, NO para sample extraction porque
+        # pueden ser de 50+ segundos con crosstalk.
         transcript = build_transcript_from_legacy_segments(
             legacy_segments=common_segments,
             annotation_turns=annotation_turns,
@@ -108,12 +113,20 @@ def _publish_domain_artifacts(
         )
         transcript.save(state.artifacts_dir / "transcript.json")
 
+        # Slice 18: Transcript de muestreo construido desde los turnos RAW
+        # del RTTM (cada turno = un segmento). Single-speaker garantizado
+        # por construccion de pyannote diarization. Threshold mas bajo
+        # porque los turnos raw son tipicamente cortos (~0.5-3s).
+        sample_transcript = build_transcript_from_annotation_turns(
+            annotation_turns=annotation_turns,
+            speaker_map=speaker_map,
+            audio_path=str(state.working_path),
+            language=language,
+        )
         plans = plan_speaker_samples(
-            transcript,
+            sample_transcript,
             max_clips_per_speaker=5,
-            min_clip_duration_ms=2000,
-            # Slice 17: threshold permisivo para no identificados — visibilidad
-            # en por_nombrar/ aunque los clips sean cortos.
+            min_clip_duration_ms=1500,
             min_unidentified_clip_duration_ms=500,
         )
         if plans:

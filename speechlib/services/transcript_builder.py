@@ -68,6 +68,60 @@ def _build_identity(
     )
 
 
+def build_transcript_from_annotation_turns(
+    annotation_turns: list[tuple[float, float, str]],
+    speaker_map: dict[str, str],
+    audio_path: str,
+    language: str,
+) -> Transcript:
+    """Construye un Transcript donde cada segmento es exactamente un turno
+    raw de pyannote diarization.
+
+    A diferencia de build_transcript_from_legacy_segments (que parte del
+    output post-merge/post-grouping del legacy y puede dar segmentos de
+    50+ segundos contaminados por crosstalk), aqui cada segmento es UN
+    turno pyannote — single-speaker por construccion del diarization.
+
+    Uso: alimentar a plan_speaker_samples para extraer samples LIMPIOS,
+    sin crosstalk de otros speakers. text="" porque no se transcribe.
+
+    Args:
+        annotation_turns: lista de (start_s, end_s, SPEAKER_XX) en orden.
+        speaker_map: {SPEAKER_XX: name_or_tag} ya resuelto. Tags ausentes
+            del map quedan no identificados.
+        audio_path, language: metadata para el aggregate.
+
+    Returns:
+        Transcript con un segmento por turno, en el mismo orden del input.
+    """
+    new_segments = []
+    for start_s, end_s, tag in annotation_turns:
+        mapped = speaker_map.get(tag, tag)
+        # Defensa: legacy puede tener "unknown" o tag literal como value.
+        # Normalizar a recognized_name=None en esos casos.
+        if mapped == tag or mapped == "unknown" or mapped.startswith("SPEAKER_"):
+            identity = SpeakerIdentity(diarization_tag=tag, recognized_name=None)
+        else:
+            identity = SpeakerIdentity(
+                diarization_tag=tag,
+                recognized_name=mapped,
+                similarity=None,
+            )
+        new_segments.append(
+            TranscriptSegment(
+                start_ms=int(round(start_s * 1000)),
+                end_ms=int(round(end_s * 1000)),
+                text="",
+                speaker=identity,
+            )
+        )
+    return Transcript(
+        segments=tuple(new_segments),
+        audio_path=audio_path,
+        language=language,
+    )
+
+
 def build_transcript_from_legacy_segments(
     legacy_segments: Iterable,
     annotation_turns: list[tuple[float, float, str]],

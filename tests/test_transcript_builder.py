@@ -75,6 +75,118 @@ def test_int_ms_conversion():
     assert t.segments[0].end_ms == 5678
 
 
+def test_build_from_raw_turns_empty_input_returns_empty_transcript():
+    from speechlib.services.transcript_builder import build_transcript_from_annotation_turns
+
+    t = build_transcript_from_annotation_turns(
+        annotation_turns=[],
+        speaker_map={},
+        audio_path="x.wav",
+        language="es",
+    )
+    assert t.segments == ()
+    assert t.audio_path == "x.wav"
+    assert t.language == "es"
+
+
+def test_build_from_raw_turns_text_is_always_empty_string():
+    """No se transcribe — los samples no requieren texto."""
+    from speechlib.services.transcript_builder import build_transcript_from_annotation_turns
+
+    t = build_transcript_from_annotation_turns(
+        annotation_turns=[(0.0, 1.0, "SPEAKER_00")],
+        speaker_map={"SPEAKER_00": "Manuel"},
+        audio_path="x.wav",
+        language="es",
+    )
+    assert t.segments[0].text == ""
+
+
+def test_build_from_raw_turns_unmapped_tag_stays_unidentified():
+    """Si un tag no aparece en speaker_map, queda como SPEAKER_XX no identificado.
+    Defensa: el speaker_map podria estar parcial."""
+    from speechlib.services.transcript_builder import build_transcript_from_annotation_turns
+
+    t = build_transcript_from_annotation_turns(
+        annotation_turns=[(0.0, 1.0, "SPEAKER_99")],
+        speaker_map={"SPEAKER_00": "Manuel"},  # SPEAKER_99 ausente
+        audio_path="x.wav",
+        language="es",
+    )
+    spk = t.segments[0].speaker
+    assert spk.diarization_tag == "SPEAKER_99"
+    assert spk.recognized_name is None
+    assert spk.label == "SPEAKER_99"
+
+
+def test_build_from_raw_turns_unknown_value_normalized():
+    """Defensa contra el legacy: si el speaker_map tiene 'unknown' como valor,
+    NO debe propagarse al recognized_name. Cae a None y label = tag."""
+    from speechlib.services.transcript_builder import build_transcript_from_annotation_turns
+
+    t = build_transcript_from_annotation_turns(
+        annotation_turns=[(0.0, 1.0, "SPEAKER_07")],
+        speaker_map={"SPEAKER_07": "unknown"},
+        audio_path="x.wav",
+        language="es",
+    )
+    spk = t.segments[0].speaker
+    assert spk.recognized_name is None
+    assert spk.label == "SPEAKER_07"
+
+
+def test_build_from_raw_turns_speaker_xx_value_normalized():
+    """Defensa: si el speaker_map mapea SPEAKER_XX -> SPEAKER_XX (auto-fallback
+    del legacy), NO debe quedar como nombre. Cae a None."""
+    from speechlib.services.transcript_builder import build_transcript_from_annotation_turns
+
+    t = build_transcript_from_annotation_turns(
+        annotation_turns=[(0.0, 1.0, "SPEAKER_03")],
+        speaker_map={"SPEAKER_03": "SPEAKER_03"},
+        audio_path="x.wav",
+        language="es",
+    )
+    spk = t.segments[0].speaker
+    assert spk.recognized_name is None
+    assert spk.label == "SPEAKER_03"
+
+
+def test_build_from_raw_turns_int_ms_conversion():
+    """start/end en segundos float -> ms int."""
+    from speechlib.services.transcript_builder import build_transcript_from_annotation_turns
+
+    t = build_transcript_from_annotation_turns(
+        annotation_turns=[(1.234, 5.678, "SPEAKER_00")],
+        speaker_map={"SPEAKER_00": "X"},
+        audio_path="x.wav",
+        language="es",
+    )
+    assert t.segments[0].start_ms == 1234
+    assert t.segments[0].end_ms == 5678
+
+
+def test_build_from_raw_turns_preserves_order():
+    """Orden de los turnos del input se preserva en los segmentos del output."""
+    from speechlib.services.transcript_builder import build_transcript_from_annotation_turns
+
+    t = build_transcript_from_annotation_turns(
+        annotation_turns=[
+            (10.0, 11.0, "SPEAKER_00"),
+            (5.0,  6.0,  "SPEAKER_01"),  # mas temprano pero llega despues en la lista
+            (0.0,  1.0,  "SPEAKER_02"),
+        ],
+        speaker_map={
+            "SPEAKER_00": "A",
+            "SPEAKER_01": "B",
+            "SPEAKER_02": "C",
+        },
+        audio_path="x.wav",
+        language="es",
+    )
+    starts = [s.start_ms for s in t.segments]
+    assert starts == [10000, 5000, 0]  # mismo orden que el input
+
+
 def test_legacy_label_starting_with_speaker_used_as_tag_directly():
     """Si el legacy label ya es un SPEAKER_XX (no identificado por core_analysis),
     el builder debe usarlo TAL CUAL como diarization_tag, ignorando el overlap.
