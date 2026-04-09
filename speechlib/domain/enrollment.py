@@ -11,14 +11,7 @@ de vuelta a Paths y maneja la copia de archivos.
 
 import numpy as np
 
-
-def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    a = np.asarray(a, dtype=np.float64).flatten()
-    b = np.asarray(b, dtype=np.float64).flatten()
-    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
-    if denom == 0.0:
-        return 0.0
-    return float(np.dot(a, b) / denom)
+from .recognition import cosine_similarity as _cosine_similarity
 
 
 def reject_outlier_indices(

@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 import numpy as np
 from pyannote.audio import Model, Inference
-from scipy.spatial.distance import cosine
+from .domain.recognition import cosine_similarity
 import torch
 
 logger = logging.getLogger(__name__)
@@ -54,10 +54,7 @@ def get_embedding(audio_path: str) -> np.ndarray:
     return embedding
 
 
-def cosine_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
-    emb1 = np.asarray(emb1).flatten()
-    emb2 = np.asarray(emb2).flatten()
-    return 1.0 - cosine(emb1, emb2)
+# cosine_similarity importada de domain.recognition (canonica, sin scipy)
 
 
 def load_voice_embeddings(

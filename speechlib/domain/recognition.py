@@ -85,7 +85,8 @@ def average_embeddings(embeddings: list[np.ndarray]) -> Optional[np.ndarray]:
     return np.mean(valid, axis=0)
 
 
-def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Cosine similarity entre dos embeddings. Funcion pura, sin scipy."""
     a = np.asarray(a, dtype=np.float64).flatten()
     b = np.asarray(b, dtype=np.float64).flatten()
     denom = float(np.linalg.norm(a) * np.linalg.norm(b))
@@ -106,7 +107,7 @@ def _best_match(
     identificado', NO el string 'unknown'."""
     scores: list[tuple[str, float]] = []
     for name, voice_emb in voice_library.items():
-        scores.append((name, _cosine_similarity(embedding, voice_emb)))
+        scores.append((name, cosine_similarity(embedding, voice_emb)))
     if not scores:
         return None, None  # libreria vacia
 
