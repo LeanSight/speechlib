@@ -1,48 +1,40 @@
-"""
-AT: Verify core_analysis uses pyannote 4.x API.
-"""
+"""AT: diarization usa pyannote community-1 con token= (no use_auth_token=).
 
+Testea get_diarization_pipeline directamente. Mock solo de
+Pipeline.from_pretrained (boundary GPU externo).
+"""
+import pytest
 from unittest.mock import patch, MagicMock
-from pathlib import Path
-from conftest import make_wav
 
 
-def test_pipeline_initialized_with_community1_model(tmp_path):
-    """
-    core_analysis llama a Pipeline.from_pretrained con el modelo
-    community-1 y el parametro token= (no use_auth_token=).
-    """
-    wav = make_wav(tmp_path / "audio.wav", n_frames=1600)
+@pytest.fixture(autouse=True)
+def clear_cache():
+    from speechlib.diarization import get_diarization_pipeline
+    get_diarization_pipeline.cache_clear()
+    yield
+    get_diarization_pipeline.cache_clear()
 
-    mock_segment = MagicMock()
-    mock_segment.start = 0.0
-    mock_segment.end = 1.0
 
-    mock_pipeline = MagicMock()
-    mock_diarization = MagicMock()
-    mock_diarization.itertracks.return_value = [(mock_segment, None, "SPEAKER_00")]
-    mock_pipeline.return_value = mock_diarization
+def test_uses_community1_model():
+    """Pipeline.from_pretrained recibe modelo community-1."""
+    from speechlib.diarization import get_diarization_pipeline
 
-    with (
-        patch("speechlib.diarization.Pipeline") as mock_cls,
-        patch("speechlib.core_analysis.torchaudio") as mock_torchaudio,
-        patch("speechlib.core_analysis.convert_to_wav", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.convert_to_mono", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.re_encode", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.resample_to_16k", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.loudnorm", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.enhance_audio", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.wav_file_segmentation", return_value=[]),
-        patch("speechlib.core_analysis.write_log_file"),
-    ):
-        mock_torchaudio.load.return_value = (MagicMock(), 16000)
-        mock_cls.from_pretrained.return_value = mock_pipeline
+    with patch("speechlib.diarization.Pipeline.from_pretrained") as mock_fp:
+        mock_fp.return_value = MagicMock()
+        get_diarization_pipeline("MY_TOKEN")
 
-        from speechlib.core_analysis import core_analysis
+        args, kwargs = mock_fp.call_args
+        assert args[0] == "pyannote/speaker-diarization-community-1"
 
-        core_analysis(str(wav), None, "logs", "en", "tiny", "TOKEN", "whisper")
 
-        mock_cls.from_pretrained.assert_called_once_with(
-            "pyannote/speaker-diarization-community-1",
-            token="TOKEN",
-        )
+def test_uses_token_parameter_not_use_auth_token():
+    """Usa token= (pyannote 4.x), no use_auth_token= (3.x deprecated)."""
+    from speechlib.diarization import get_diarization_pipeline
+
+    with patch("speechlib.diarization.Pipeline.from_pretrained") as mock_fp:
+        mock_fp.return_value = MagicMock()
+        get_diarization_pipeline("MY_TOKEN")
+
+        _, kwargs = mock_fp.call_args
+        assert kwargs.get("token") == "MY_TOKEN"
+        assert "use_auth_token" not in kwargs

@@ -312,3 +312,68 @@ class TestSelectSegmentsForEmbedding:
 
         # El primero seleccionado debe ser el largo, no los cortos del inicio
         assert selected[0] is long_seg
+
+
+# ── Invariantes anti-bug (migrados de tests fragiles con mocks) ─────────────
+
+
+class TestUnknownSpeakerLabelInvariant:
+    """Speakers no reconocidos conservan SPEAKER_XX, nunca "unknown".
+
+    Migrado de test_acceptance_unknown_speaker_labels.py (13 patches)
+    a test puro de assign_speakers (0 mocks).
+    """
+
+    def test_two_unknown_speakers_keep_speaker_xx_tags(self):
+        from speechlib.domain.recognition import assign_speakers
+
+        transcript = _make_transcript("SPEAKER_00", "SPEAKER_01")
+        embeddings = {
+            "SPEAKER_00": _unit(1.0, 0.0, 0.0),
+            "SPEAKER_01": _unit(0.0, 1.0, 0.0),
+        }
+        library = {"Alguien": _unit(0.0, 0.0, 1.0)}  # ortogonal a ambos
+
+        result = assign_speakers(transcript, embeddings, library, threshold=0.55)
+
+        labels = {s.speaker.label for s in result.segments}
+        assert "unknown" not in labels
+        assert "SPEAKER_00" in labels
+        assert "SPEAKER_01" in labels
+
+    def test_known_and_unknown_coexist(self):
+        from speechlib.domain.recognition import assign_speakers
+
+        transcript = _make_transcript("SPEAKER_00", "SPEAKER_01")
+        embeddings = {
+            "SPEAKER_00": _unit(1.0, 0.0, 0.0),
+            "SPEAKER_01": _unit(0.0, 1.0, 0.0),
+        }
+        library = {"Agustin": _unit(1.0, 0.0, 0.0)}  # matchea SPEAKER_00
+
+        result = assign_speakers(transcript, embeddings, library, threshold=0.55)
+
+        labels = {s.speaker.label for s in result.segments}
+        assert "Agustin" in labels
+        assert "SPEAKER_01" in labels
+        assert "unknown" not in labels
+
+    def test_single_unknown_keeps_tag(self):
+        from speechlib.domain.recognition import assign_speakers
+
+        transcript = _make_transcript("SPEAKER_00")
+        embeddings = {"SPEAKER_00": _unit(1.0, 0.0, 0.0)}
+        library = {"Nadie": _unit(0.0, 1.0, 0.0)}  # ortogonal
+
+        result = assign_speakers(transcript, embeddings, library, threshold=0.55)
+
+        assert result.segments[0].speaker.label == "SPEAKER_00"
+        assert "unknown" not in result.segments[0].speaker.label
+
+
+class TestMinSegmentDurationConstant:
+    """Constante MIN_SEGMENT_DURATION_S protege contra crash de pyannote/embedding."""
+
+    def test_value_is_half_second(self):
+        from speechlib.speaker_recognition import MIN_SEGMENT_DURATION_S
+        assert MIN_SEGMENT_DURATION_S == 0.5

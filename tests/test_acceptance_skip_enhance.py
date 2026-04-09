@@ -1,77 +1,45 @@
-"""AT: core_analysis acepta skip_enhance=True y omite enhance_audio.
+"""AT: skip_enhance=True omite enhance_audio en el preprocessing.
 
-Para grabaciones de alta calidad o cuando latencia < calidad, enhance_audio
-puede saltarse completamente. El pipeline sigue siendo funcional: resample →
-loudnorm → diarize → transcribe (sin SE).
+Testea _preprocess_audio directamente con WAV real en tmp_path.
+Mock solo de enhance_audio (boundary GPU ClearVoice).
 """
-from unittest.mock import patch, MagicMock, call
 from pathlib import Path
+from unittest.mock import patch
+
+import torch
+import torchaudio
 
 
-def _make_pipeline_mocks(tmp_path):
-    """Fixtures comunes para tests de core_analysis."""
-    wav = tmp_path / "audio.wav"
-    wav.write_bytes(b"RIFF" + b"\x00" * 40)  # fake WAV
-
-    mock_diarization = MagicMock()
-    mock_turn = MagicMock()
-    mock_turn.start = 0.0
-    mock_turn.end = 2.0
-    mock_diarization.itertracks.return_value = [(mock_turn, None, "SPEAKER_00")]
-
-    mock_pipeline = MagicMock()
-    mock_pipeline.return_value = mock_diarization
-
-    return wav, mock_pipeline
+def _make_wav(path: Path, duration_s: float = 1.0, sr: int = 16000) -> Path:
+    n = int(duration_s * sr)
+    torchaudio.save(str(path), torch.zeros(1, n), sr, bits_per_sample=16)
+    return path
 
 
-def test_enhance_audio_not_called_when_skip_enhance(tmp_path):
-    """Con skip_enhance=True, enhance_audio nunca debe invocarse."""
-    from speechlib import core_analysis as ca
-    wav, mock_pipeline = _make_pipeline_mocks(tmp_path)
+def test_skip_enhance_true_does_not_call_enhance(tmp_path):
+    """Con skip_enhance=True, enhance_audio no se invoca."""
+    from speechlib.core_analysis import _preprocess_audio
 
-    with (
-        patch("speechlib.core_analysis.convert_to_wav", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.convert_to_mono", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.re_encode", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.resample_to_16k", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.loudnorm", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.enhance_audio") as mock_enhance,
-        patch("speechlib.core_analysis._get_diarization_pipeline", return_value=mock_pipeline),
-        patch("torchaudio.load", return_value=(MagicMock(), 16000)),
-        patch("speechlib.core_analysis.transcribe_full_aligned", return_value=[]),
-        patch("speechlib.core_analysis.write_log_file"),
-        patch("speechlib.core_analysis.merge_short_turns", side_effect=lambda s: s),
-    ):
-        ca.core_analysis(
-            str(wav), None, str(tmp_path), "es", "large-v3-turbo",
-            "fake_token", "faster-whisper", skip_enhance=True,
-        )
+    wav = _make_wav(tmp_path / "audio.wav")
+
+    with patch("speechlib.core_analysis.enhance_audio") as mock_enhance:
+        state = _preprocess_audio(str(wav), skip_enhance=True)
 
     mock_enhance.assert_not_called()
+    assert not state.is_enhanced
 
 
-def test_enhance_audio_called_by_default(tmp_path):
-    """Sin skip_enhance (o False), enhance_audio se invoca normalmente."""
-    from speechlib import core_analysis as ca
-    wav, mock_pipeline = _make_pipeline_mocks(tmp_path)
+def test_skip_enhance_false_calls_enhance(tmp_path):
+    """Sin skip_enhance (default), enhance_audio se invoca."""
+    from speechlib.core_analysis import _preprocess_audio
 
-    with (
-        patch("speechlib.core_analysis.convert_to_wav", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.convert_to_mono", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.re_encode", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.resample_to_16k", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.loudnorm", side_effect=lambda s: s),
-        patch("speechlib.core_analysis.enhance_audio", side_effect=lambda s: s) as mock_enhance,
-        patch("speechlib.core_analysis._get_diarization_pipeline", return_value=mock_pipeline),
-        patch("torchaudio.load", return_value=(MagicMock(), 16000)),
-        patch("speechlib.core_analysis.transcribe_full_aligned", return_value=[]),
-        patch("speechlib.core_analysis.write_log_file"),
-        patch("speechlib.core_analysis.merge_short_turns", side_effect=lambda s: s),
-    ):
-        ca.core_analysis(
-            str(wav), None, str(tmp_path), "es", "large-v3-turbo",
-            "fake_token", "faster-whisper",
-        )
+    wav = _make_wav(tmp_path / "audio.wav")
+
+    with patch(
+        "speechlib.core_analysis.enhance_audio",
+        side_effect=lambda s: s.model_copy(update={"is_enhanced": True}),
+    ) as mock_enhance:
+        state = _preprocess_audio(str(wav), skip_enhance=False)
 
     mock_enhance.assert_called_once()
+    assert state.is_enhanced

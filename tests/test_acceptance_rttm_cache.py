@@ -1,13 +1,16 @@
-"""
-Slice 11 AT: diarization.rttm cache
-"""
+"""AT: diarization.rttm cache — save, load, y skip de pipeline.
 
-import json
-import pytest
+Testea _run_diarization_cached directamente con AudioState real en tmp_path.
+Mock solo en boundary GPU (_get_diarization_pipeline).
+"""
 from pathlib import Path
-from unittest.mock import patch, MagicMock, call
-import torchaudio
+from unittest.mock import patch, MagicMock
+
 import torch
+import torchaudio
+from pyannote.core import Annotation, Segment
+
+from speechlib.audio_state import AudioState
 
 
 def _make_wav(path: Path, duration_s: float = 5.0, sr: int = 16000) -> Path:
@@ -16,117 +19,98 @@ def _make_wav(path: Path, duration_s: float = 5.0, sr: int = 16000) -> Path:
     return path
 
 
-def _make_annotation_mock(speakers: list[str], duration_s: float = 5.0):
-    turns = []
+def _make_state(tmp_path: Path) -> AudioState:
+    wav = _make_wav(tmp_path / "audio.wav")
+    state = AudioState(source_path=wav, working_path=wav, is_wav=True)
+    state.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    return state
+
+
+def _make_real_annotation(*speakers: str) -> Annotation:
+    """Annotation real de pyannote (no mock) con un segmento por speaker."""
+    a = Annotation(uri="waveform")
     for i, spk in enumerate(speakers):
-        turn = MagicMock()
-        turn.start = float(i * (duration_s + 1))
-        turn.end = float(i * (duration_s + 1) + duration_s)
-        turns.append((turn, None, spk))
-
-    mock_annotation = MagicMock()
-    mock_annotation.itertracks.return_value = iter(turns)
-
-    def write_rttm(file_handle):
-        for spk in speakers:
-            start = 0.0
-            file_handle.write(
-                f"SPEAKER test 1 {start} {duration_s} <NA> <NA> {spk} <NA> <NA>\n"
-            )
-
-    mock_annotation.write_rttm = write_rttm
-    return mock_annotation
+        a[Segment(float(i * 5), float(i * 5 + 4))] = spk
+    return a
 
 
 class TestRttmCache:
-    """Tests for diarization.rttm caching"""
 
     def test_rttm_saved_after_diarization(self, tmp_path):
-        """core_analysis saves diarization.rttm after running diarization"""
-        from speechlib.core_analysis import core_analysis
+        """Primera corrida sin cache → pipeline corre y guarda RTTM."""
+        from speechlib.core_analysis import _run_diarization_cached
 
-        audio = _make_wav(tmp_path / "audio.wav", duration_s=10.0)
-        voices = tmp_path / "voices"
-        voices.mkdir()
-        (voices / "speaker").mkdir()
-        _make_wav(voices / "speaker" / "voice.wav")
+        state = _make_state(tmp_path)
+        annotation = _make_real_annotation("SPEAKER_00", "SPEAKER_01")
 
         mock_pipeline = MagicMock()
-        mock_diar = MagicMock()
-        mock_diar.speaker_diarization = _make_annotation_mock(["SPEAKER_00"])
-        mock_pipeline.return_value = mock_diar
+        mock_pipeline.return_value = annotation
 
         with patch(
             "speechlib.core_analysis._get_diarization_pipeline",
             return_value=mock_pipeline,
         ):
-            with patch(
-                "speechlib.core_analysis._load_rttm", side_effect=FileNotFoundError()
-            ):
-                core_analysis(str(audio), str(voices), str(tmp_path / "logs"), "en")
+            result_ann, from_cache = _run_diarization_cached(state, "TOKEN")
 
-        rttm_path = tmp_path / ".audio" / "diarization.rttm"
-        assert rttm_path.exists(), f"diarization.rttm should be saved at {rttm_path}"
+        rttm_path = state.artifacts_dir / "diarization.rttm"
+        assert rttm_path.exists()
+        assert not from_cache
+        # Verifica que la annotation retornada tiene los speakers
+        tracks = list(result_ann.itertracks(yield_label=True))
+        labels = {t[2] for t in tracks}
+        assert "SPEAKER_00" in labels
+        assert "SPEAKER_01" in labels
 
     def test_rttm_cache_skips_pipeline_call(self, tmp_path):
-        """diarization.rttm exists → pipeline NOT called"""
-        from speechlib.core_analysis import core_analysis
+        """RTTM en disco → pipeline NO se invoca, annotation se carga de cache."""
+        from speechlib.core_analysis import _run_diarization_cached
 
-        audio = _make_wav(tmp_path / "audio.wav", duration_s=10.0)
-        voices = tmp_path / "voices"
-        voices.mkdir()
-        (voices / "speaker").mkdir()
-        _make_wav(voices / "speaker" / "voice.wav")
+        state = _make_state(tmp_path)
 
-        rttm_path = tmp_path / ".audio" / "diarization.rttm"
-        rttm_path.parent.mkdir(parents=True)
-        rttm_path.write_text(
-            "SPEAKER test 1 0.0 5.0 <NA> <NA> speaker_0 <NA> <NA>", encoding="utf-8"
-        )
-
-        mock_annotation = _make_annotation_mock(["SPEAKER_00"])
-        mock_rttm = MagicMock(return_value={"test": mock_annotation})
+        # Crear RTTM real en disco
+        state.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        rttm_path = state.artifacts_dir / "diarization.rttm"
+        annotation = _make_real_annotation("SPEAKER_00")
+        with open(rttm_path, "w") as f:
+            annotation.write_rttm(f)
 
         mock_pipeline = MagicMock()
-
-        with patch("speechlib.core_analysis._load_rttm", mock_rttm):
-            with patch(
-                "speechlib.core_analysis._get_diarization_pipeline",
-                return_value=mock_pipeline,
-            ):
-                core_analysis(str(audio), str(voices), str(tmp_path / "logs"), "en")
-
-        mock_pipeline.assert_not_called()
-
-    def test_rttm_content_roundtrip(self, tmp_path):
-        """save annotation → load_rttm → same SPEAKER_XX and timestamps"""
-        from speechlib.core_analysis import core_analysis
-
-        audio = _make_wav(tmp_path / "audio.wav", duration_s=10.0)
-        voices = tmp_path / "voices"
-        voices.mkdir()
-        (voices / "speaker").mkdir()
-        _make_wav(voices / "speaker" / "voice.wav")
-
-        speakers_input = ["SPEAKER_00", "SPEAKER_01"]
-        mock_pipeline = MagicMock()
-        mock_diar = MagicMock()
-        mock_diar.speaker_diarization = _make_annotation_mock(
-            speakers_input, duration_s=4.0
-        )
-        mock_pipeline.return_value = mock_diar
 
         with patch(
             "speechlib.core_analysis._get_diarization_pipeline",
             return_value=mock_pipeline,
         ):
-            with patch(
-                "speechlib.core_analysis._load_rttm", side_effect=FileNotFoundError()
-            ):
-                core_analysis(str(audio), str(voices), str(tmp_path / "logs"), "en")
+            _, from_cache = _run_diarization_cached(state, "TOKEN")
 
-        rttm_path = tmp_path / ".audio" / "diarization.rttm"
-        content = rttm_path.read_text(encoding="utf-8")
+        assert from_cache
+        mock_pipeline.assert_not_called()
 
-        assert "SPEAKER_00" in content
-        assert "SPEAKER_01" in content
+    def test_rttm_roundtrip_preserves_speakers(self, tmp_path):
+        """Save → load roundtrip preserva tags y timestamps."""
+        from speechlib.core_analysis import _run_diarization_cached
+
+        state = _make_state(tmp_path)
+        annotation = _make_real_annotation("SPEAKER_00", "SPEAKER_01")
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.return_value = annotation
+
+        with patch(
+            "speechlib.core_analysis._get_diarization_pipeline",
+            return_value=mock_pipeline,
+        ):
+            # Primera corrida: guarda RTTM
+            _run_diarization_cached(state, "TOKEN")
+
+        # Segunda corrida: lee de cache
+        with patch(
+            "speechlib.core_analysis._get_diarization_pipeline",
+            return_value=MagicMock(),
+        ):
+            loaded_ann, from_cache = _run_diarization_cached(state, "TOKEN")
+
+        assert from_cache
+        tracks = list(loaded_ann.itertracks(yield_label=True))
+        labels = {t[2] for t in tracks}
+        assert "SPEAKER_00" in labels
+        assert "SPEAKER_01" in labels
