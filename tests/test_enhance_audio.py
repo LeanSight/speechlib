@@ -18,12 +18,12 @@ def _state(path: Path) -> AudioState:
 
 
 def test_enhance_audio_creates_enhanced_file(tmp_path):
-    """enhance_audio crea un archivo con sufijo _enhanced."""
+    """enhance_audio crea un archivo enhanced.wav en artifacts_dir."""
     wav = make_tone_wav(tmp_path / "audio.wav", amplitude=0.3, duration_s=2.0)
     result = enhance_audio(_state(wav))
 
     assert result.is_enhanced is True
-    assert "_enhanced" in str(result.working_path)
+    assert result.working_path.name == "enhanced.wav"
     assert result.working_path.exists()
 
 

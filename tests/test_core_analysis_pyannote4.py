@@ -58,7 +58,7 @@ def test_pyannote4_api_comprehensive(tmp_path):
         )
 
         args, kwargs = mock_cls.from_pretrained.call_args
-        assert args[0] == "pyannote/speaker-diarization-3.1", "Debe usar modelo 3.1"
+        assert args[0] == "pyannote/speaker-diarization-community-1", "Debe usar modelo community-1"
         assert "use_auth_token" not in kwargs, "No debe usar use_auth_token="
         assert kwargs.get("token") == "MY_TOKEN", "Debe usar token="
 

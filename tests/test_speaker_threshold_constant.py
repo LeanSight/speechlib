@@ -6,11 +6,13 @@ sus tests en test_domain_recognition.py / test_acceptance_recognition_quality.py
 """
 
 
-def test_constant_value_is_045():
-    """Slice 9: subido de 0.40 a 0.45 para reducir false positives en
-    voice libraries con calidad heterogenea."""
+def test_constant_value_is_050():
+    """Threshold subido de 0.45 -> 0.50 tras el fix de Pamela bug:
+    el nuevo embedding selection (top-N por duracion) surfaceó un falso
+    positivo en Alicanto SPEAKER_02 -> Cristian Ruiz a sim=0.498. Pamela
+    (0.71) y Agustin (0.72) siguen pasando holgadamente."""
     from speechlib.speaker_recognition import SPEAKER_SIMILARITY_THRESHOLD
-    assert SPEAKER_SIMILARITY_THRESHOLD == 0.45
+    assert SPEAKER_SIMILARITY_THRESHOLD == 0.50
 
 
 def test_min_margin_constant_exists():

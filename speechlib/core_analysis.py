@@ -26,7 +26,11 @@ from .speaker_recognition import (
     load_avg_voice_embeddings,
 )
 from .audio_utils import slice_and_save
-from .domain.recognition import assign_speakers, average_embeddings
+from .domain.recognition import (
+    assign_speakers,
+    average_embeddings,
+    select_segments_for_embedding,
+)
 from .services.transcript_builder import apply_speaker_map_to_segments
 from .domain.transcript import (
     SpeakerIdentity,
@@ -216,15 +220,17 @@ def _compute_averaged_embeddings_per_tag(
 
     embeddings_by_tag: dict = {}
     for spk_tag, spk_segments in speakers.items():
-        accumulated_ms = 0
+        # Bug fix Pamela: seleccion por duracion descendente, no por orden
+        # de documento. Funcion pura del dominio (select_segments_for_embedding).
+        selected = select_segments_for_embedding(
+            spk_segments,
+            limit_s=limit_s,
+            min_segment_s=MIN_SEGMENT_DURATION_S,
+        )
         per_chunk_embeddings: list = []
-        for i, segment in enumerate(spk_segments):
-            if accumulated_ms >= limit_s * 1000:
-                break
+        for i, segment in enumerate(selected):
             start_ms = segment[0] * 1000
             end_ms = segment[1] * 1000
-            if (end_ms - start_ms) < MIN_SEGMENT_DURATION_S * 1000:
-                continue
             chunk = (
                 folder_name + "/"
                 + os.path.splitext(os.path.basename(str(state.working_path)))[0]
@@ -240,7 +246,6 @@ def _compute_averaged_embeddings_per_tag(
                     os.remove(chunk)
                 except OSError:
                     pass
-            accumulated_ms += end_ms - start_ms
         averaged = average_embeddings(per_chunk_embeddings)
         if averaged is not None:
             embeddings_by_tag[spk_tag] = averaged

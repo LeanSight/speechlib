@@ -22,6 +22,45 @@ import numpy as np
 from .transcript import SpeakerIdentity, Transcript
 
 
+def select_segments_for_embedding(
+    segments: list,
+    *,
+    limit_s: float,
+    min_segment_s: float,
+) -> list:
+    """Selecciona segmentos representativos para computar el embedding promedio
+    de un speaker tag.
+
+    Bug fix: el flujo legacy iteraba en orden de documento y se detenia al
+    sumar `limit_s`. En recordings largos, los primeros turnos pueden ser
+    contaminados (crosstalk inicial, ruido) y no representan al speaker.
+    Esta funcion ordena por duracion descendente: los turnos largos son
+    tipicamente los mas limpios y discriminativos.
+
+    Funcion pura del dominio: cero I/O. Recibe los segmentos como [start, end, ...]
+    y retorna la sublista que se debe procesar (en el orden largo->corto, hasta
+    alcanzar el limit_s acumulado, descartando los menores a min_segment_s).
+
+    Args:
+        segments: lista de [start_s, end_s, ...] (extras ignorados).
+        limit_s: duracion maxima acumulada (en segundos) a procesar.
+        min_segment_s: descarta segmentos individuales menores a este umbral.
+
+    Returns:
+        Sublista de segmentos seleccionados, ordenados de mayor a menor duracion.
+    """
+    eligible = [s for s in segments if (s[1] - s[0]) >= min_segment_s]
+    eligible.sort(key=lambda s: -(s[1] - s[0]))
+    selected: list = []
+    accumulated = 0.0
+    for seg in eligible:
+        if accumulated >= limit_s:
+            break
+        selected.append(seg)
+        accumulated += seg[1] - seg[0]
+    return selected
+
+
 def average_embeddings(embeddings: list[np.ndarray]) -> Optional[np.ndarray]:
     """Promedia una lista de embeddings, filtrando los que contengan NaN.
 

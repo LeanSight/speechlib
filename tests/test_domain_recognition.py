@@ -238,3 +238,77 @@ class TestAssignSpeakersPurity:
         assert result.segments[0].start_ms == transcript.segments[0].start_ms
         assert result.segments[0].end_ms == transcript.segments[0].end_ms
         assert result.segments[0].text == transcript.segments[0].text
+
+
+class TestSelectSegmentsForEmbedding:
+    """Pure-domain selection of segments for averaged embedding computation.
+
+    Bug context (Pamela Falconi regression): el flujo legacy iteraba en
+    orden de documento y se detenia al sumar limit_s. Resultado empirico en
+    Alicanto SPEAKER_00: los primeros 25 turnos sumaban 62s y producian un
+    embedding contaminado (similarity 0.39 vs library Pamela), mientras que
+    los TOP-5 turnos mas largos producian similarity 0.69. La seleccion debe
+    ser por duracion descendente, no por orden de documento.
+    """
+
+    def test_returns_longest_first_until_limit_reached(self):
+        from speechlib.domain.recognition import select_segments_for_embedding
+
+        # Mezcla intencional: cortos primero, largos despues
+        segments = [
+            [0.0, 0.6, "S"],   # 0.6s
+            [1.0, 1.8, "S"],   # 0.8s
+            [2.0, 12.0, "S"],  # 10.0s  ← largo
+            [13.0, 13.7, "S"], # 0.7s
+            [14.0, 22.0, "S"], # 8.0s   ← largo
+            [23.0, 23.6, "S"], # 0.6s
+        ]
+
+        selected = select_segments_for_embedding(
+            segments, limit_s=15.0, min_segment_s=0.5
+        )
+
+        # Top-2 mas largos: 10s + 8s = 18s. Debe parar al SUPERAR 15s,
+        # devolviendo 10s + 8s (porque tras 10s acumulados, aun no se llega
+        # a 15s, asi que entra el 8s tambien).
+        assert [s[1] - s[0] for s in selected] == pytest.approx([10.0, 8.0])
+
+    def test_filters_segments_below_min_duration(self):
+        from speechlib.domain.recognition import select_segments_for_embedding
+
+        segments = [
+            [0.0, 0.3, "S"],   # 0.3s ← descartado
+            [1.0, 0.4 + 1.0, "S"],  # 0.4s ← descartado
+            [2.0, 4.5, "S"],   # 2.5s
+        ]
+
+        selected = select_segments_for_embedding(
+            segments, limit_s=60.0, min_segment_s=0.5
+        )
+
+        assert len(selected) == 1
+        assert selected[0][1] - selected[0][0] == pytest.approx(2.5)
+
+    def test_empty_input_returns_empty_list(self):
+        from speechlib.domain.recognition import select_segments_for_embedding
+
+        assert select_segments_for_embedding(
+            [], limit_s=60.0, min_segment_s=0.5
+        ) == []
+
+    def test_priority_is_descending_duration_not_document_order(self):
+        """El bug exacto: en orden de documento los primeros eran cortos
+        contaminados; el fix prioriza por duracion descendente."""
+        from speechlib.domain.recognition import select_segments_for_embedding
+
+        # 10 segmentos cortos (0.6s) + 1 segmento largo (8s)
+        short_segs = [[i, i + 0.6, "S"] for i in range(10)]
+        long_seg = [100.0, 108.0, "S"]
+        segments = short_segs + [long_seg]
+
+        selected = select_segments_for_embedding(
+            segments, limit_s=5.0, min_segment_s=0.5
+        )
+
+        # El primero seleccionado debe ser el largo, no los cortos del inicio
+        assert selected[0] is long_seg
