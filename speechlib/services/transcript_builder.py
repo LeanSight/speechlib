@@ -75,13 +75,24 @@ def _build_identity(
 ) -> SpeakerIdentity:
     """Decide la SpeakerIdentity para un segmento legacy.
 
-    Reglas:
+    Reglas heuristicas (Smell 8 — DEUDA RECONOCIDA):
     - Si diarization_tag esta disponible, se usa como tag pyannote.
     - Si no hay tag (no overlap encontrado), el label se usa como tag de fallback.
     - recognized_name se setea solo si label corresponde a un nombre real
       en speaker_map (es decir, label != tag y label != "unknown").
     - El literal "unknown" del legacy se NORMALIZA a recognized_name=None
       (defensa contra el bug original).
+
+    DEFERRED — Smell 8: estas heuristicas (`label.startswith("SPEAKER_")`,
+    `label == "unknown"`) son fragiles. Funcionan como adapter de migracion
+    legacy -> dominio nuevo. NO se pueden eliminar mientras el flujo legacy
+    de core_analysis siga construyendo `common_segments` con strings (no
+    Transcript). Cuando el legacy desaparezca completamente (Slice futuro
+    "core_analysis publica Transcript directamente"), este branching y la
+    funcion entera se borran.
+
+    Track: ningun caller fuera de build_transcript_from_legacy_segments. La
+    funcion es privada del adapter de migracion.
     """
     tag = diarization_tag or label
 
