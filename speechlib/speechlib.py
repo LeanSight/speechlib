@@ -1,3 +1,5 @@
+import warnings
+
 from .core_analysis import core_analysis
 from .re_encode import re_encode
 from .convert_to_mono import convert_to_mono
@@ -19,230 +21,31 @@ class Transcriptor:
         voices_folder=None,
         quantization=False,
     ):
+        """Transcribe a wav file with speaker diarization.
+
+        Args:
+            file: name of wav file with extension (e.g. ``file.wav``)
+            log_folder: name of folder where transcript will be stored
+            language: ISO language code (``es``, ``en``, ``pt``, ...). The
+                full list of supported languages is documented externally
+                at https://github.com/Navodplayer1/speechlib (Smell 4: 220
+                lineas de enumeracion movidas a docs externos).
+            modelSize: ``tiny``, ``small``, ``medium``, ``large``,
+                ``large-v1``, ``large-v2``, ``large-v3``. Modelos mas grandes
+                son mas precisos pero mas lentos.
+            ACCESS_TOKEN: huggingface access token
+            voices_folder: folder con subfolders por speaker con voice samples
+                para speaker recognition. Default ``None`` (sin recognition).
+            quantization: int8 quantization (default ``False``)
+
+        Methods:
+            ``whisper()``           openai-whisper
+            ``faster_whisper()``    faster-whisper (recommended)
+            ``custom_whisper(p)``   custom whisper model
+            ``huggingface_model(id)``  HuggingFace transcription model
+            ``assembly_ai_model(k)`` AssemblyAI cloud transcription
         """
-        transcribe a wav file
-
-        arguments:
-
-        file: name of wav file with extension ex: file.wav
-
-        log_folder: name of folder where transcript will be stored
-
-        language: language of wav file
-
-        modelSize: tiny, small, medium, large, large-v1, large-v2, large-v3 (bigger model is more accurate but slow!!)
-
-        ACCESS_TOKEN: huggingface access token
-
-        voices_folder: folder containing subfolders named after each speaker with speaker voice samples in them. This will be used for speaker recognition
-
-        quantization: whether to use int8 quantization or not (default=False)
-
-        see documentation: https://github.com/Navodplayer1/speechlib
-
-
-        supported languages:
-        #### Afrikaans
-        "af",
-        #### Amharic
-        "am",
-        #### Arabic
-        "ar",
-        #### Assamese
-        "as",
-        #### Azerbaijani
-        "az",
-        #### Bashkir
-        "ba",
-        #### Belarusian
-        "be",
-        #### Bulgarian
-        "bg",
-        #### Bengali
-        "bn",
-        #### Tibetan
-        "bo",
-        #### Breton
-        "br",
-        #### Bosnian
-        "bs",
-        #### Catalan
-        "ca",
-        #### Czech
-        "cs",
-        #### Welsh
-        "cy",
-        #### Danish
-        "da",
-        #### German
-        "de",
-        #### Greek
-        "el",
-        #### English
-        "en",
-        #### Spanish
-        "es",
-        #### Estonian
-        "et",
-        #### Basque
-        "eu",
-        #### Persian
-        "fa",
-        #### Finnish
-        "fi",
-        #### Faroese
-        "fo",
-        #### French
-        "fr",
-        #### Galician
-        "gl",
-        #### Gujarati
-        "gu",
-        #### Hausa
-        "ha",
-        #### Hawaiian
-        "haw",
-        #### Hebrew
-        "he",
-        #### Hindi
-        "hi",
-        #### Croatian
-        "hr",
-        #### Haitian
-        "ht",
-        #### Hungarian
-        "hu",
-        #### Armenian
-        "hy",
-        #### Indonesian
-        "id",
-        #### Icelandic
-        "is",
-        #### Italian
-        "it",
-        #### Japanese
-        "ja",
-        #### Javanese
-        "jw",
-        #### Georgian
-        "ka",
-        #### Kazakh
-        "kk",
-        #### Khmer
-        "km",
-        #### Kannada
-        "kn",
-        #### Korean
-        "ko",
-        #### Latin
-        "la",
-        #### Luxembourgish
-        "lb",
-        #### Lingala
-        "ln",
-        #### Lao
-        "lo",
-        #### Lithuanian
-        "lt",
-        #### Latvian
-        "lv",
-        #### Malagasy
-        "mg",
-        #### Maori
-        "mi",
-        #### Macedonian
-        "mk",
-        #### Malayalam
-        "ml",
-        #### Mongolian
-        "mn",
-        #### Marathi
-        "mr",
-        #### Malay
-        "ms",
-        #### Maltese
-        "mt",
-        #### Burmese
-        "my",
-        #### Nepali
-        "ne",
-        #### Dutch
-        "nl",
-        #### Norwegian Nynorsk
-        "nn",
-        #### Norwegian
-        "no",
-        #### Occitan
-        "oc",
-        #### Punjabi
-        "pa",
-        #### Polish
-        "pl",
-        #### Pashto
-        "ps",
-        #### Portuguese
-        "pt",
-        #### Romanian
-        "ro",
-        #### Russian
-        "ru",
-        #### Sanskrit
-        "sa",
-        #### Sindhi
-        "sd",
-        #### Sinhalese
-        "si",
-        #### Slovak
-        "sk",
-        #### Slovenian
-        "sl",
-        #### Shona
-        "sn",
-        #### Somali
-        "so",
-        #### Albanian
-        "sq",
-        #### Serbian
-        "sr",
-        #### Sundanese
-        "su",
-        #### Swedish
-        "sv",
-        #### Swahili
-        "sw",
-        #### Tamil
-        "ta",
-        #### Telugu
-        "te",
-        #### Tajik
-        "tg",
-        #### Thai
-        "th",
-        #### Turkmen
-        "tk",
-        #### Tagalog
-        "tl",
-        #### Turkish
-        "tr",
-        #### Tatar
-        "tt",
-        #### Ukrainian
-        "uk",
-        #### Urdu
-        "ur",
-        #### Uzbek
-        "uz",
-        #### Vietnamese
-        "vi",
-        #### Yiddish
-        "yi",
-        #### Yoruba
-        "yo",
-        #### Chinese
-        "zh",
-        #### Cantonese
-        "yue",
-        """
+        # Smell 4: docstring enumerando 99 idiomas movido a docs externos.
         self.file = file
         self.voices_folder = voices_folder
         self.language = language
@@ -251,76 +54,54 @@ class Transcriptor:
         self.quantization = quantization
         self.ACCESS_TOKEN = ACCESS_TOKEN
 
-    def whisper(self):
-        res = core_analysis(
+    def _run(
+        self,
+        model_type: str,
+        custom_model_path=None,
+        hf_model_id=None,
+        aai_api_key=None,
+    ):
+        """Helper privado: dispatcha a core_analysis con el model_type correcto.
+        Smell 4: colapsa los 5 metodos publicos en uno parametrizado."""
+        return core_analysis(
             self.file,
             self.voices_folder,
             self.log_folder,
             self.language,
             self.modelSize,
             self.ACCESS_TOKEN,
-            "whisper",
-            self.quantization,
-        )
-        return res
-
-    def faster_whisper(self):
-        res = core_analysis(
-            self.file,
-            self.voices_folder,
-            self.log_folder,
-            self.language,
-            self.modelSize,
-            self.ACCESS_TOKEN,
-            "faster-whisper",
-            self.quantization,
-        )
-        return res
-
-    def custom_whisper(self, custom_model_path):
-        res = core_analysis(
-            self.file,
-            self.voices_folder,
-            self.log_folder,
-            self.language,
-            self.modelSize,
-            self.ACCESS_TOKEN,
-            "custom",
+            model_type,
             self.quantization,
             custom_model_path,
-        )
-        return res
-
-    def huggingface_model(self, hf_model_id):
-        res = core_analysis(
-            self.file,
-            self.voices_folder,
-            self.log_folder,
-            self.language,
-            self.modelSize,
-            self.ACCESS_TOKEN,
-            "huggingface",
-            self.quantization,
-            None,
             hf_model_id,
-        )
-        return res
-
-    def assemby_ai_model(self, aai_api_key):
-        res = core_analysis(
-            self.file,
-            self.voices_folder,
-            self.log_folder,
-            self.language,
-            self.modelSize,
-            self.ACCESS_TOKEN,
-            "assemblyAI",
-            self.quantization,
-            None,
-            None,
             aai_api_key,
         )
-        return res
+
+    def whisper(self):
+        return self._run("whisper")
+
+    def faster_whisper(self):
+        return self._run("faster-whisper")
+
+    def custom_whisper(self, custom_model_path):
+        return self._run("custom", custom_model_path=custom_model_path)
+
+    def huggingface_model(self, hf_model_id):
+        return self._run("huggingface", hf_model_id=hf_model_id)
+
+    def assembly_ai_model(self, aai_api_key):
+        """Transcribe usando AssemblyAI cloud API."""
+        return self._run("assemblyAI", aai_api_key=aai_api_key)
+
+    def assemby_ai_model(self, aai_api_key):
+        """DEPRECATED: typo legacy. Use ``assembly_ai_model`` instead."""
+        warnings.warn(
+            "Transcriptor.assemby_ai_model is deprecated due to a typo; "
+            "use Transcriptor.assembly_ai_model instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.assembly_ai_model(aai_api_key)
 
 
 class PreProcessor:
