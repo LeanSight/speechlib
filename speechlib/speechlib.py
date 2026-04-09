@@ -338,44 +338,30 @@ class PreProcessor:
 
     """
 
-    def re_encode(self, file):
+    @staticmethod
+    def _apply(step, file):
+        """Helper privado: aplica un audio step (re_encode, loudnorm, etc.)
+        a un file path. Encapsula la conversion path -> AudioState -> path
+        que vivia repetida en cada metodo publico (Smell 5)."""
         from pathlib import Path
 
         state = AudioState(source_path=Path(file), working_path=Path(file))
-        result = re_encode(state)
-        return str(result.working_path)
+        return str(step(state).working_path)
+
+    def re_encode(self, file):
+        return self._apply(re_encode, file)
 
     def convert_to_mono(self, file):
-        from pathlib import Path
-
-        state = AudioState(source_path=Path(file), working_path=Path(file))
-        result = convert_to_mono(state)
-        return str(result.working_path)
+        return self._apply(convert_to_mono, file)
 
     def convert_to_wav(self, file):
-        from pathlib import Path
-
-        state = AudioState(source_path=Path(file), working_path=Path(file))
-        result = convert_to_wav(state)
-        return str(result.working_path)
+        return self._apply(convert_to_wav, file)
 
     def resample_to_16k(self, file):
-        from pathlib import Path
-
-        state = AudioState(source_path=Path(file), working_path=Path(file))
-        result = resample_to_16k(state)
-        return str(result.working_path)
+        return self._apply(resample_to_16k, file)
 
     def loudnorm(self, file):
-        from pathlib import Path
-
-        state = AudioState(source_path=Path(file), working_path=Path(file))
-        result = loudnorm(state)
-        return str(result.working_path)
+        return self._apply(loudnorm, file)
 
     def enhance_audio(self, file):
-        from pathlib import Path
-
-        state = AudioState(source_path=Path(file), working_path=Path(file))
-        result = enhance_audio(state)
-        return str(result.working_path)
+        return self._apply(enhance_audio, file)
