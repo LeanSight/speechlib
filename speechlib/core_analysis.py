@@ -5,15 +5,17 @@ import threading
 import time
 
 logger = logging.getLogger(__name__)
+
+# Smell 7: monkey-patch de torchaudio aislado en speechlib/compat.py.
+# Importar compat ANTES de cualquier modulo que use torchaudio (pyannote, etc.)
+from . import compat  # noqa: F401  side-effect: patches torchaudio
+
 from .wav_segmenter import wav_file_segmentation
 from .transcribe import transcribe_full_aligned
 from .step_timer import measure, print_report
 from .kernel_profiler import measure as kmeasure, print_report as kprint_report
 
 import torchaudio
-
-if not hasattr(torchaudio, "list_audio_backends"):
-    torchaudio.list_audio_backends = lambda: ["sox"]
 
 from .diarization import get_diarization_pipeline as _get_diarization_pipeline
 from .speaker_recognition import (
