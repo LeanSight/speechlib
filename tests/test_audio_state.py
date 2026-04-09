@@ -38,3 +38,22 @@ def test_audio_state_accepts_flags():
         is_16bit=True,
     )
     assert state.is_wav and state.is_mono and state.is_16bit
+
+
+def test_artifacts_dir_strips_trailing_spaces():
+    """Filenames como 'Voz .m4a' (trailing space antes de ext) producian
+    un artifacts_dir con trailing space que Windows no puede escribir."""
+    state = AudioState(
+        source_path=Path("/rec/Voz .m4a"),
+        working_path=Path("/rec/Voz .m4a"),
+    )
+    assert state.artifacts_dir == Path("/rec/.Voz")
+    assert not str(state.artifacts_dir).endswith(" ")
+
+
+def test_artifacts_dir_normal_filename():
+    state = AudioState(
+        source_path=Path("/rec/meeting.m4a"),
+        working_path=Path("/rec/meeting.m4a"),
+    )
+    assert state.artifacts_dir == Path("/rec/.meeting")

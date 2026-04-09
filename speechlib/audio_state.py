@@ -20,4 +20,4 @@ class AudioState(BaseModel):
 
         Ejemplo: /rec/Voz 260320.m4a → /rec/.Voz 260320/
         """
-        return self.source_path.parent / f".{self.source_path.stem}"
+        return self.source_path.parent / f".{self.source_path.stem.strip()}"
