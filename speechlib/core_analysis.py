@@ -461,11 +461,7 @@ def core_analysis(
 
     compress_thread = _start_compress_thread(state_loudnorm) if compress else None
 
-    if not skip_enhance:
-        with console.status("Enhance..."):
-            state = enhance_audio(state_loudnorm)
-    else:
-        state = state_loudnorm
+    state_for_asr = enhance_audio(state_loudnorm) if not skip_enhance else state_loudnorm
 
     with console.status("Diarization..."):
         annotation, from_cache = _run_diarization_cached(state_loudnorm, ACCESS_TOKEN)
@@ -477,7 +473,7 @@ def core_analysis(
     if has_voices_folder:
         with console.status("Speaker recognition..."):
             speaker_map = _run_speaker_recognition_cached(
-                state, voices_folder, speakers, speaker_tags,
+                state_for_asr, voices_folder, speakers, speaker_tags,
                 allowed_speakers=allowed_speakers,
             )
         recognized = [v for k, v in speaker_map.items() if v != k]
@@ -489,7 +485,7 @@ def core_analysis(
 
     with console.status("Transcription..."):
         common_segments = _transcribe_segments(
-            state, common, speaker_map,
+            state_for_asr, common, speaker_map,
             language=language,
             model_size=modelSize,
             model_type=model_type,
@@ -509,17 +505,17 @@ def core_analysis(
             write_log_file(
                 common_segments,
                 log_folder,
-                str(state.working_path),
+                str(state_for_asr.working_path),
                 language,
                 output_format,
             )
         with measure("publish_artifacts"):
-            _publish_domain_artifacts(common_segments, annotation, speaker_map, state, language)
+            _publish_domain_artifacts(common_segments, annotation, speaker_map, state_for_asr, language)
 
         if compress_thread is not None:
             compress_thread.join()
 
-        _publish_to_source_folder(state, language, output_format)
+        _publish_to_source_folder(state_for_asr, language, output_format)
 
     console.print("[green]OK[/] Output written")
 
