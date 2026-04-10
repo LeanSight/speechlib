@@ -120,5 +120,30 @@ def run(
     )
 
 
+@app.command()
+def recognize(
+    file: _file_arg,
+    voices_folder: _voices_opt = None,
+    speakers: _speakers_opt = None,
+    force: Annotated[bool, typer.Option(help="Force recompute (delete cached speaker_map)")] = False,
+    verbose: _verbose_opt = False,
+):
+    """Re-run speaker recognition on existing diarization artifacts."""
+    _setup_logging(verbose)
+    from .core_analysis import run_recognition
+
+    if voices_folder is None:
+        raise typer.BadParameter("--voices-folder required for recognize.", param_hint="--voices-folder")
+
+    result = run_recognition(
+        file_name=str(file),
+        voices_folder=str(voices_folder),
+        allowed_speakers=_parse_speakers(speakers),
+        force=force,
+    )
+    import json
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 if __name__ == "__main__":
     app()

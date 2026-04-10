@@ -397,6 +397,42 @@ def _run_diarization_cached(state: AudioState, access_token: str | None, *, num_
     return annotation, False
 
 
+def run_recognition(
+    file_name: str,
+    voices_folder: str,
+    *,
+    allowed_speakers: list[str] | None = None,
+    force: bool = False,
+) -> dict:
+    """Re-ejecuta solo speaker recognition sobre RTTM existente."""
+    state = AudioState(source_path=Path(file_name), working_path=Path(file_name))
+    state.artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    # Cargar RTTM
+    rttm_path = state.artifacts_dir / "diarization.rttm"
+    if not rttm_path.exists():
+        raise FileNotFoundError(f"No diarization.rttm in {state.artifacts_dir}. Run full pipeline first.")
+    annotation = next(iter(_load_rttm(str(rttm_path)).values()))
+
+    # Resolver working_path al audio procesado (16k o enhanced)
+    for candidate in ("enhanced.wav", "16k.wav"):
+        p = state.artifacts_dir / candidate
+        if p.exists():
+            state = state.model_copy(update={"working_path": p, "is_wav": True})
+            break
+
+    if force:
+        (state.artifacts_dir / "speaker_map.json").unlink(missing_ok=True)
+        (state.artifacts_dir / "speaker_map_params.json").unlink(missing_ok=True)
+
+    _, speakers, speaker_tags, _ = _build_speaker_groups(annotation)
+
+    return _run_speaker_recognition_cached(
+        state, voices_folder, speakers, speaker_tags,
+        allowed_speakers=allowed_speakers,
+    )
+
+
 def _publish_to_source_folder(state: AudioState, language: str, output_format: str) -> None:
     """Copia outputs finales al source folder con naming _limpio."""
     source_dir = state.source_path.parent
