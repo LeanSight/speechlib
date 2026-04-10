@@ -333,6 +333,17 @@ def _run_speaker_recognition_cached(
     params_path.write_text(
         json.dumps(current_params, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+    diagnostics = build_score_matrix(
+        embeddings_by_tag, voice_library,
+        threshold=SPEAKER_SIMILARITY_THRESHOLD,
+        min_margin=SPEAKER_SIMILARITY_MIN_MARGIN,
+    )
+    diag_path = state.artifacts_dir / "recognition_diagnostics.json"
+    diag_path.write_text(
+        json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
     return speaker_map
 
 
