@@ -1,8 +1,10 @@
 import wave
 import struct
 from .audio_state import AudioState
+from .step_timer import timed
 
 
+@timed("re_encode")
 def re_encode(state: AudioState) -> AudioState:
     with wave.open(str(state.working_path), 'rb') as f:
         params = f.getparams()

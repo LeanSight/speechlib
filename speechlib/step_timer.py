@@ -24,7 +24,7 @@ try:
 except ImportError:
     _TORCH_AVAILABLE = False
 
-_GPU_STEPS = {"enhance_audio", "diarization", "transcription"}
+_GPU_STEPS = {"enhance_audio", "diarization", "transcription", "speaker_embeddings"}
 
 _records: list[dict] = []
 

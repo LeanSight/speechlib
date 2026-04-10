@@ -188,11 +188,7 @@ def _compute_averaged_embeddings_per_tag(
     *,
     limit_s: float = 60.0,
 ):
-    """Para cada SPEAKER_XX, computa el embedding promedio a partir de chunks.
-
-    Application service: orquesta I/O (slice audio + inference).
-    Aggregation (promedio + filtro NaN) en domain.recognition.average_embeddings.
-    """
+    """Para cada SPEAKER_XX, computa el embedding promedio a partir de chunks."""
     import numpy as np
 
     inference = _get_inference()
@@ -201,36 +197,35 @@ def _compute_averaged_embeddings_per_tag(
         os.makedirs(folder_name)
 
     embeddings_by_tag: dict = {}
-    for spk_tag, spk_segments in speakers.items():
-        # Bug fix Pamela: seleccion por duracion descendente, no por orden
-        # de documento. Funcion pura del dominio (select_segments_for_embedding).
-        selected = select_segments_for_embedding(
-            spk_segments,
-            limit_s=limit_s,
-            min_segment_s=MIN_SEGMENT_DURATION_S,
-        )
-        per_chunk_embeddings: list = []
-        for i, segment in enumerate(selected):
-            start_ms = segment[0] * 1000
-            end_ms = segment[1] * 1000
-            chunk = (
-                folder_name + "/"
-                + os.path.splitext(os.path.basename(str(state.working_path)))[0]
-                + f"_{spk_tag}_chunk_{i}.wav"
+    with measure("speaker_embeddings", gpu=True):
+        for spk_tag, spk_segments in speakers.items():
+            selected = select_segments_for_embedding(
+                spk_segments,
+                limit_s=limit_s,
+                min_segment_s=MIN_SEGMENT_DURATION_S,
             )
-            try:
-                slice_and_save(str(state.working_path), start_ms, end_ms, chunk)
-                per_chunk_embeddings.append(np.asarray(inference(chunk)))
-            except Exception as exc:
-                logger.debug("Error extracting embedding from segment: %s", exc)
-            finally:
+            per_chunk_embeddings: list = []
+            for i, segment in enumerate(selected):
+                start_ms = segment[0] * 1000
+                end_ms = segment[1] * 1000
+                chunk = (
+                    folder_name + "/"
+                    + os.path.splitext(os.path.basename(str(state.working_path)))[0]
+                    + f"_{spk_tag}_chunk_{i}.wav"
+                )
                 try:
-                    os.remove(chunk)
-                except OSError:
-                    pass
-        averaged = average_embeddings(per_chunk_embeddings)
-        if averaged is not None:
-            embeddings_by_tag[spk_tag] = averaged
+                    slice_and_save(str(state.working_path), start_ms, end_ms, chunk)
+                    per_chunk_embeddings.append(np.asarray(inference(chunk)))
+                except Exception as exc:
+                    logger.debug("Error extracting embedding from segment: %s", exc)
+                finally:
+                    try:
+                        os.remove(chunk)
+                    except OSError:
+                        pass
+            averaged = average_embeddings(per_chunk_embeddings)
+            if averaged is not None:
+                embeddings_by_tag[spk_tag] = averaged
     return embeddings_by_tag
 
 
@@ -517,7 +512,8 @@ def core_analysis(
                 language,
                 output_format,
             )
-        _publish_domain_artifacts(common_segments, annotation, speaker_map, state, language)
+        with measure("publish_artifacts"):
+            _publish_domain_artifacts(common_segments, annotation, speaker_map, state, language)
 
         if compress_thread is not None:
             compress_thread.join()

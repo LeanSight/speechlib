@@ -1,8 +1,10 @@
 import wave
 import numpy as np
 from .audio_state import AudioState
+from .step_timer import timed
 
 
+@timed("convert_to_mono")
 def convert_to_mono(state: AudioState) -> AudioState:
     with wave.open(str(state.working_path), 'rb') as f:
         params = f.getparams()

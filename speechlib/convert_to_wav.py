@@ -1,7 +1,9 @@
 import torchaudio
 from .audio_state import AudioState
+from .step_timer import timed
 
 
+@timed("convert_to_wav")
 def convert_to_wav(state: AudioState) -> AudioState:
     if state.working_path.suffix.lower() == ".wav":
         return state.model_copy(update={"is_wav": True})
