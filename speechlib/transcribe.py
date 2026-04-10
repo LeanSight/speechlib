@@ -7,6 +7,8 @@ from transformers import pipeline
 import assemblyai as aai
 from functools import lru_cache
 
+TRANSCRIPTION_BATCH_SIZE = 4
+
 
 @lru_cache(maxsize=4)
 def _get_faster_whisper_model(model_size: str, device: str, compute_type: str) -> "WhisperModel":
@@ -39,7 +41,7 @@ def transcribe_full_aligned(file_name, segments, language, model_size, quantizat
 
     batched = BatchedInferencePipeline(model=model)
     whisper_segments, _ = batched.transcribe(
-        file_name, language=language, beam_size=1, batch_size=4,
+        file_name, language=language, beam_size=1, batch_size=TRANSCRIPTION_BATCH_SIZE,
         word_timestamps=True,
     )
     whisper_segs = list(whisper_segments)

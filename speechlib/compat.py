@@ -17,6 +17,16 @@ Cada patch debe documentar:
 import torchaudio
 
 
+def patch_torchaudio_list_audio_backends() -> None:
+    """Restaura torchaudio.list_audio_backends() removido en torchaudio 2.x+.
+
+    SpeechBrain 1.0.3 llama esta funcion al importarse via pyannote.
+    Borrar cuando: speechbrain >= 1.1.0 sin bug de k2_fsa lazy import.
+    """
+    if not hasattr(torchaudio, "list_audio_backends"):
+        torchaudio.list_audio_backends = lambda: ["sox"]
+
+
 def patch_torchaudio_torchcodec() -> None:
     """Reemplaza torchaudio.load/save con implementaciones basadas en PyAV.
 
@@ -184,4 +194,5 @@ def patch_torchaudio_torchcodec() -> None:
 # Aplicamos los patches al importar este modulo. Cualquier consumer de speechlib
 # que importe `from speechlib import compat` (o cualquier modulo que lo
 # transitivamente importe) tendra los patches activos.
+patch_torchaudio_list_audio_backends()
 patch_torchaudio_torchcodec()

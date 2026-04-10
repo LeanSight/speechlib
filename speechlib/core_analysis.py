@@ -396,12 +396,8 @@ def _publish_to_source_folder(state: AudioState, language: str, output_format: s
         shutil.copy2(transcript_src, source_dir / f"{stem}_limpio.{ext}")
 
 
-def _preprocess_audio(file_name: str, *, skip_enhance: bool) -> AudioState:
-    """Pipeline de pre-processing del audio fuente.
-
-    Pasos: convert_to_wav -> mono -> re_encode -> 16k -> loudnorm -> [enhance].
-    Reusa cache 16k.wav cuando existe en artifacts_dir.
-    """
+def _preprocess_audio(file_name: str) -> AudioState:
+    """Preprocessing hasta loudnorm (sin enhance). Reusa cache 16k.wav."""
     state = AudioState(source_path=Path(file_name), working_path=Path(file_name))
     state.artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -423,8 +419,6 @@ def _preprocess_audio(file_name: str, *, skip_enhance: bool) -> AudioState:
         state = resample_to_16k(state)
 
     state = loudnorm(state)
-    if not skip_enhance:
-        state = enhance_audio(state)
     return state
 
 
@@ -460,19 +454,25 @@ def core_analysis(
         log_folder = os.path.join(os.path.dirname(os.path.abspath(file_name)), "output")
 
     with console.status("Preprocessing..."):
-        state = _preprocess_audio(file_name, skip_enhance=skip_enhance)
+        state_loudnorm = _preprocess_audio(file_name)
 
     compress_thread = None
     if compress:
         compress_thread = threading.Thread(
             target=compress_audio,
-            args=(state.working_path, state.source_path.parent / f"{state.source_path.stem.strip()}_limpio.m4a"),
+            args=(state_loudnorm.working_path, state_loudnorm.source_path.parent / f"{state_loudnorm.source_path.stem.strip()}_limpio.m4a"),
             daemon=True,
         )
         compress_thread.start()
 
+    if not skip_enhance:
+        with console.status("Enhance..."):
+            state = enhance_audio(state_loudnorm)
+    else:
+        state = state_loudnorm
+
     with console.status("Diarization..."):
-        annotation, from_cache = _run_diarization_cached(state, ACCESS_TOKEN)
+        annotation, from_cache = _run_diarization_cached(state_loudnorm, ACCESS_TOKEN)
     console.print(f"[green]OK[/] Diarization {'(cache)' if from_cache else 'done'}")
 
     common, speakers, speaker_tags, speaker_map = _build_speaker_groups(annotation)
