@@ -417,6 +417,14 @@ def _preprocess_audio(file_name: str) -> AudioState:
     return state
 
 
+def _start_compress_thread(state: AudioState) -> threading.Thread:
+    """Lanza compresion AAC en background thread."""
+    limpio_path = state.source_path.parent / f"{state.source_path.stem.strip()}_limpio.m4a"
+    t = threading.Thread(target=compress_audio, args=(state.working_path, limpio_path), daemon=True)
+    t.start()
+    return t
+
+
 def core_analysis(
     file_name,
     voices_folder,
@@ -451,14 +459,7 @@ def core_analysis(
     with console.status("Preprocessing..."):
         state_loudnorm = _preprocess_audio(file_name)
 
-    compress_thread = None
-    if compress:
-        compress_thread = threading.Thread(
-            target=compress_audio,
-            args=(state_loudnorm.working_path, state_loudnorm.source_path.parent / f"{state_loudnorm.source_path.stem.strip()}_limpio.m4a"),
-            daemon=True,
-        )
-        compress_thread.start()
+    compress_thread = _start_compress_thread(state_loudnorm) if compress else None
 
     if not skip_enhance:
         with console.status("Enhance..."):
