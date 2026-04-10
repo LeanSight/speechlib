@@ -7,7 +7,6 @@ import time
 
 logger = logging.getLogger(__name__)
 
-# Smell 7: monkey-patch de torchaudio aislado en speechlib/compat.py.
 # Importar compat ANTES de cualquier modulo que use torchaudio (pyannote, etc.)
 from . import compat  # noqa: F401  side-effect: patches torchaudio
 
@@ -28,8 +27,10 @@ from .speaker_recognition import (
 )
 from .audio_utils import slice_and_save
 from .domain.recognition import (
+    assign_extra_speakers,
     assign_speakers,
     average_embeddings,
+    filter_voice_library,
     select_segments_for_embedding,
 )
 from .services.transcript_builder import apply_speaker_map_to_segments
@@ -79,11 +80,7 @@ def _publish_domain_artifacts(
     state: AudioState,
     language: str,
 ) -> None:
-    """Publica el aggregate del nuevo dominio en paralelo al output legacy.
-
-    transcript.json es el formato canonico futuro; el VTT queda como render.
-    Cero impacto sobre el output legacy: si esto falla, no rompe la corrida.
-    """
+    """Publica transcript.json y samples en artifacts_dir. No afecta el VTT."""
     try:
         from .domain.sample_extraction import plan_speaker_samples
         from .services.extract_samples import extract_speaker_samples
@@ -97,9 +94,6 @@ def _publish_domain_artifacts(
             for turn, _, tag in annotation.itertracks(yield_label=True)
         ]
 
-        # Transcript readable: usa los segmentos post-merge/post-grouping
-        # del legacy. Buenos para texto, NO para sample extraction porque
-        # pueden ser de 50+ segundos con crosstalk.
         transcript = build_transcript_from_legacy_segments(
             legacy_segments=common_segments,
             annotation_turns=annotation_turns,
@@ -109,10 +103,6 @@ def _publish_domain_artifacts(
         )
         transcript.save(state.artifacts_dir / "transcript.json")
 
-        # Slice 18: Transcript de muestreo construido desde los turnos RAW
-        # del RTTM (cada turno = un segmento). Single-speaker garantizado
-        # por construccion de pyannote diarization. Threshold mas bajo
-        # porque los turnos raw son tipicamente cortos (~0.5-3s).
         sample_transcript = build_transcript_from_annotation_turns(
             annotation_turns=annotation_turns,
             speaker_map=speaker_map,
@@ -132,9 +122,6 @@ def _publish_domain_artifacts(
                 output_dir=state.artifacts_dir / "samples",
             )
     except Exception:
-        # Smell 3: log full traceback (no swallow silencioso). El legacy output
-        # sigue funcionando, pero ahora podemos diagnosticar regresiones de la
-        # nueva feature de Slice 5 con stack frames + line numbers.
         logger.exception(
             "domain transcript publish failed; legacy output continues unaffected"
         )
@@ -156,12 +143,7 @@ def _transcribe_segments(
     """Transcribe segmentos del audio. Soporta faster-whisper (alineado) y
     el path generico (segmentacion por speaker).
 
-    Smell 2: para el path faster-whisper (default) NO necesitamos el dict
-    `speakers` — solo `common`. Para el path generico, lo regeneramos
-    in-line (era _regroup_speakers_from_common, ahora inlined porque solo
-    se usa aqui) y eliminamos el helper top-level.
     """
-    print("running transcription...")
     with measure("transcription", gpu=True):
         if model_type == "faster-whisper":
             return transcribe_full_aligned(
@@ -208,9 +190,8 @@ def _compute_averaged_embeddings_per_tag(
 ):
     """Para cada SPEAKER_XX, computa el embedding promedio a partir de chunks.
 
-    Application service: orquesta el I/O (slice del audio + inference).
-    La logica de aggregation (promedio + filtro NaN) vive en la funcion
-    pura speechlib.domain.recognition.average_embeddings (Smell 6 fix).
+    Application service: orquesta I/O (slice audio + inference).
+    Aggregation (promedio + filtro NaN) en domain.recognition.average_embeddings.
     """
     import numpy as np
 
@@ -241,7 +222,7 @@ def _compute_averaged_embeddings_per_tag(
                 slice_and_save(str(state.working_path), start_ms, end_ms, chunk)
                 per_chunk_embeddings.append(np.asarray(inference(chunk)))
             except Exception as exc:
-                print(f"Error extracting embedding from segment: {exc}")
+                logger.debug("Error extracting embedding from segment: %s", exc)
             finally:
                 try:
                     os.remove(chunk)
@@ -253,42 +234,16 @@ def _compute_averaged_embeddings_per_tag(
     return embeddings_by_tag
 
 
-def _run_speaker_recognition_cached(
-    state: AudioState,
-    voices_folder: str,
-    speakers: dict,
+def _build_speaker_map(
+    embeddings_by_tag: dict,
+    voice_library: dict,
     speaker_tags: list,
+    speakers: dict,
+    audio_path: str,
+    *,
+    without_sample: list[str] | None = None,
 ) -> dict:
-    """Identifica cada SPEAKER_XX contra la libreria de voces, con cache.
-
-    Si artifacts_dir/speaker_map.json existe, lo carga. Si no, computa
-    embeddings por tag y delega en assign_speakers (dominio puro). El
-    resultado se serializa al formato legacy {tag: name_or_tag}.
-
-    Slice 13b: elimino el hack historico de "unknown" -> tag. Ahora la
-    transformacion la hace SpeakerIdentity.label por construccion del
-    dominio: si recognized_name es None, label cae al diarization_tag.
-    Es estructuralmente imposible que el speaker_map.json contenga el
-    literal "unknown".
-
-    Mantiene comportamiento observable identico para los consumidores
-    legacy de speaker_map.json.
-    """
-    speaker_map_path = state.artifacts_dir / "speaker_map.json"
-
-    if speaker_map_path.exists():
-        speaker_map = json.loads(speaker_map_path.read_text(encoding="utf-8"))
-        print("speaker_map loaded from cache.")
-        return speaker_map
-
-    start_time = int(time.time())
-    print("running speaker recognition...")
-
-    voice_library = load_avg_voice_embeddings(
-        Path(voices_folder), enhanced=state.is_enhanced
-    )
-    embeddings_by_tag = _compute_averaged_embeddings_per_tag(state, speakers)
-
+    """Construye speaker_map a partir de embeddings y voice library. Puro."""
     transcript = Transcript(
         segments=tuple(
             TranscriptSegment(
@@ -300,7 +255,7 @@ def _run_speaker_recognition_cached(
             for tag in speaker_tags
             if tag in embeddings_by_tag
         ),
-        audio_path=str(state.working_path),
+        audio_path=audio_path,
         language="",
     )
 
@@ -312,20 +267,58 @@ def _run_speaker_recognition_cached(
         min_margin=SPEAKER_SIMILARITY_MIN_MARGIN,
     )
 
-    elapsed = int(time.time() - start_time)
-    print(f"speaker recognition done. Time taken: {elapsed} seconds.")
-
-    # Construir speaker_map legacy desde el aggregate del dominio.
-    # SpeakerIdentity.label devuelve recognized_name OR diarization_tag,
-    # NUNCA el literal "unknown" — el bug es estructuralmente imposible.
     speaker_map: dict = {
         seg.speaker.diarization_tag: seg.speaker.label
         for seg in relabeled.segments
     }
-    # Tags sin embedding (turnos demasiado cortos): preservar como SPEAKER_XX
     for spk_tag in speaker_tags:
         if spk_tag not in speaker_map:
             speaker_map[spk_tag] = spk_tag
+
+    if without_sample:
+        segment_counts = {tag: len(segs) for tag, segs in speakers.items()}
+        speaker_map = assign_extra_speakers(speaker_map, without_sample, segment_counts)
+
+    return speaker_map
+
+
+def _resolve_voice_library(
+    voices_folder: str,
+    enhanced: bool,
+    allowed_speakers: list[str] | None,
+) -> tuple[dict, list[str]]:
+    """Carga voice library y separa speakers con/sin sample. I/O boundary."""
+    full_library = load_avg_voice_embeddings(Path(voices_folder), enhanced=enhanced)
+    if allowed_speakers is not None:
+        with_sample = set(allowed_speakers) & set(full_library.keys())
+        without_sample = [s for s in allowed_speakers if s not in full_library]
+        return filter_voice_library(full_library, allowed_names=with_sample), without_sample
+    return full_library, []
+
+
+def _run_speaker_recognition_cached(
+    state: AudioState,
+    voices_folder: str,
+    speakers: dict,
+    speaker_tags: list,
+    *,
+    allowed_speakers: list[str] | None = None,
+) -> dict:
+    """Identifica speakers con cache. I/O shell fino sobre funciones puras."""
+    speaker_map_path = state.artifacts_dir / "speaker_map.json"
+
+    if speaker_map_path.exists():
+        return json.loads(speaker_map_path.read_text(encoding="utf-8"))
+
+    voice_library, without_sample = _resolve_voice_library(
+        voices_folder, state.is_enhanced, allowed_speakers
+    )
+    embeddings_by_tag = _compute_averaged_embeddings_per_tag(state, speakers)
+
+    speaker_map = _build_speaker_map(
+        embeddings_by_tag, voice_library, speaker_tags, speakers,
+        str(state.working_path), without_sample=without_sample,
+    )
 
     speaker_map_path.write_text(
         json.dumps(speaker_map, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -375,15 +368,13 @@ def _run_diarization_cached(state: AudioState, access_token: str | None):
         try:
             return next(iter(_load_rttm(str(rttm_path)).values())), True
         except Exception as e:
-            print(f"WARNING: could not load diarization.rttm ({e}), recomputing.")
+            logger.warning("could not load diarization.rttm (%s), recomputing.", e)
             rttm_path.unlink(missing_ok=True)
 
     pipeline = _get_diarization_pipeline(access_token)
     waveform, sample_rate = torchaudio.load(str(state.working_path))
-    print("running diarization...")
     with measure("diarization", gpu=True), kmeasure("diarization"):
         diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate})
-    print("diarization done.")
     annotation = (
         diarization.speaker_diarization
         if hasattr(diarization, "speaker_diarization")
@@ -437,8 +428,6 @@ def _preprocess_audio(file_name: str, *, skip_enhance: bool) -> AudioState:
     return state
 
 
-# by default use google speech-to-text API
-# if False, then use whisper finetuned version for sinhala
 def core_analysis(
     file_name,
     voices_folder,
@@ -455,17 +444,24 @@ def core_analysis(
     skip_enhance: bool = False,
     compress: bool = False,
     grouping_mode: str = "sentences",
+    allowed_speakers: list[str] | None = None,
 ):
+    import torch
+    from rich.console import Console
+    console = Console()
+
+    if not torch.cuda.is_available():
+        console.print("[yellow]WARN: CUDA no disponible — CPU mode (lento). Activaste mamba?[/]")
+
+    device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+    console.print(f"[dim]speechlib | {device} | {Path(file_name).name}[/]")
+
     if log_folder is None:
         log_folder = os.path.join(os.path.dirname(os.path.abspath(file_name)), "output")
 
-    # <-------------------PreProcessing file-------------------------->
+    with console.status("Preprocessing..."):
+        state = _preprocess_audio(file_name, skip_enhance=skip_enhance)
 
-    state = _preprocess_audio(file_name, skip_enhance=skip_enhance)
-
-    # <--------------------running analysis--------------------------->
-
-    # Launch compression in background thread (CPU) while diarization runs (GPU)
     compress_thread = None
     if compress:
         compress_thread = threading.Thread(
@@ -475,66 +471,60 @@ def core_analysis(
         )
         compress_thread.start()
 
-    annotation, from_cache = _run_diarization_cached(state, ACCESS_TOKEN)
-    if from_cache:
-        print("diarization loaded from cache.")
+    with console.status("Diarization..."):
+        annotation, from_cache = _run_diarization_cached(state, ACCESS_TOKEN)
+    console.print(f"[green]OK[/] Diarization {'(cache)' if from_cache else 'done'}")
 
     common, speakers, speaker_tags, speaker_map = _build_speaker_groups(annotation)
 
     has_voices_folder = voices_folder is not None and voices_folder != ""
     if has_voices_folder:
-        speaker_map = _run_speaker_recognition_cached(
-            state, voices_folder, speakers, speaker_tags
-        )
+        with console.status("Speaker recognition..."):
+            speaker_map = _run_speaker_recognition_cached(
+                state, voices_folder, speakers, speaker_tags,
+                allowed_speakers=allowed_speakers,
+            )
+        recognized = [v for k, v in speaker_map.items() if v != k]
+        console.print(f"[green]OK[/] Speaker recognition — {len(recognized)} identified")
 
-    # Smell 1: reemplaza _merge_same_speakers (legacy mutating helper) con
-    # apply_speaker_map_to_segments (funcion pura). Las mutaciones de
-    # `speakers` y `speaker_map` que el legacy hacia eran DEAD CODE — speakers
-    # se regenera 2 lineas abajo via _regroup_speakers_from_common, y
-    # speaker_map se usa solo via .get(name, name) que nunca toca las claves
-    # borradas.
     common = apply_speaker_map_to_segments(common, speaker_map)
-
-    # absorb micro-segments into longer neighbors, then merge same-speaker turns
     common = absorb_micro_segments(common)
     common = merge_short_turns(common)
 
-    # Smell 2: dejamos de regenerar `speakers` aqui — _transcribe_segments lo
-    # regenera in-line solo cuando el path generico (non-faster-whisper) lo
-    # necesita. faster-whisper (default) opera solo sobre `common`.
-    common_segments = _transcribe_segments(
-        state, common, speaker_map,
-        language=language,
-        model_size=modelSize,
-        model_type=model_type,
-        quantization=quantization,
-        custom_model_path=custom_model_path,
-        hf_model_id=hf_model_id,
-        aai_api_key=aai_api_key,
-    )
-    print("transcription done.")
+    with console.status("Transcription..."):
+        common_segments = _transcribe_segments(
+            state, common, speaker_map,
+            language=language,
+            model_size=modelSize,
+            model_type=model_type,
+            quantization=quantization,
+            custom_model_path=custom_model_path,
+            hf_model_id=hf_model_id,
+            aai_api_key=aai_api_key,
+        )
+    console.print("[green]OK[/] Transcription done")
 
     common_segments = _group_post_transcription(
         common_segments, model_type=model_type, grouping_mode=grouping_mode
     )
 
-    # writing log file
-    with measure("write_log_file"):
-        write_log_file(
-            common_segments,
-            log_folder,
-            str(state.working_path),
-            language,
-            output_format,
-        )
+    with console.status("Writing output..."):
+        with measure("write_log_file"):
+            write_log_file(
+                common_segments,
+                log_folder,
+                str(state.working_path),
+                language,
+                output_format,
+            )
+        _publish_domain_artifacts(common_segments, annotation, speaker_map, state, language)
 
-    _publish_domain_artifacts(common_segments, annotation, speaker_map, state, language)
+        if compress_thread is not None:
+            compress_thread.join()
 
-    # Wait for background compression to finish
-    if compress_thread is not None:
-        compress_thread.join()
+        _publish_to_source_folder(state, language, output_format)
 
-    _publish_to_source_folder(state, language, output_format)
+    console.print("[green]OK[/] Output written")
 
     print_report()
     kprint_report()

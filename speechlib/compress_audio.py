@@ -1,9 +1,6 @@
 import logging
 from pathlib import Path
 
-from torchcodec.decoders import AudioDecoder
-from torchcodec.encoders import AudioEncoder
-
 from .step_timer import timed
 
 logger = logging.getLogger(__name__)
@@ -19,6 +16,9 @@ def compress_audio(source: Path, output: Path) -> Path | None:
     Returns output path on success, None on failure.
     """
     try:
+        from torchcodec.decoders import AudioDecoder
+        from torchcodec.encoders import AudioEncoder
+
         decoder = AudioDecoder(str(source))
         result = decoder.get_all_samples()
         encoder = AudioEncoder(result.data, sample_rate=result.sample_rate)

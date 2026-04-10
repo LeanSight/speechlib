@@ -1,3 +1,7 @@
+[tool.uv]
+# Este proyecto usa mamba como ambiente. No crear .venv.
+managed = false
+
 [project]
 name = "speechlib"
 version = "1.1.16"

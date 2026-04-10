@@ -85,6 +85,45 @@ def average_embeddings(embeddings: list[np.ndarray]) -> Optional[np.ndarray]:
     return np.mean(valid, axis=0)
 
 
+def assign_extra_speakers(
+    speaker_map: dict[str, str],
+    extra_names: list[str],
+    segment_counts: dict[str, int],
+) -> dict[str, str]:
+    """Asigna nombres de speakers sin sample a tags no matcheados.
+
+    Tags no matcheados son aquellos donde speaker_map[tag] == tag (no reconocidos).
+    Se asignan en orden descendente de segment_counts (el que más habla recibe
+    el primer nombre extra).
+
+    Funcion pura del dominio: cero I/O.
+    """
+    if not extra_names:
+        return speaker_map
+
+    unmatched = [tag for tag, name in speaker_map.items() if tag == name]
+    unmatched.sort(key=lambda t: -segment_counts.get(t, 0))
+
+    result = dict(speaker_map)
+    for tag, name in zip(unmatched, extra_names):
+        result[tag] = name
+    return result
+
+
+def filter_voice_library(
+    library: dict[str, np.ndarray],
+    allowed_names: set[str] | None,
+) -> dict[str, np.ndarray]:
+    """Filtra la voice library a solo los speakers esperados.
+
+    Si allowed_names es None, retorna la library completa (sin filtro).
+    Funcion pura del dominio: cero I/O.
+    """
+    if allowed_names is None:
+        return library
+    return {k: v for k, v in library.items() if k in allowed_names}
+
+
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     """Cosine similarity entre dos embeddings. Funcion pura, sin scipy."""
     a = np.asarray(a, dtype=np.float64).flatten()
