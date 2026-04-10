@@ -365,7 +365,7 @@ def _build_speaker_groups(annotation):
     return common, speakers, speaker_tags, speaker_map
 
 
-def _run_diarization_cached(state: AudioState, access_token: str | None):
+def _run_diarization_cached(state: AudioState, access_token: str | None, *, num_speakers: int | None = None):
     """Devuelve la annotation pyannote, reutilizando diarization.rttm si existe.
 
     Recompute si el cache existe pero esta corrupto. Escribe el RTTM cuando
@@ -383,7 +383,10 @@ def _run_diarization_cached(state: AudioState, access_token: str | None):
     pipeline = _get_diarization_pipeline(access_token)
     waveform, sample_rate = torchaudio.load(str(state.working_path))
     with measure("diarization", gpu=True), kmeasure("diarization"):
-        diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate})
+        pipeline_kwargs = {}
+        if num_speakers is not None:
+            pipeline_kwargs["num_speakers"] = num_speakers
+        diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate}, **pipeline_kwargs)
     annotation = (
         diarization.speaker_diarization
         if hasattr(diarization, "speaker_diarization")
@@ -473,8 +476,12 @@ def core_analysis(
     with console.status("Preprocessing..."):
         state_loudnorm = _preprocess_audio(file_name)
 
+    num_speakers = len(allowed_speakers) if allowed_speakers else None
+
     with console.status("Diarization..."):
-        annotation, from_cache = _run_diarization_cached(state_loudnorm, ACCESS_TOKEN)
+        annotation, from_cache = _run_diarization_cached(
+            state_loudnorm, ACCESS_TOKEN, num_speakers=num_speakers
+        )
     console.print(f"[green]OK[/] Diarization {'(cache)' if from_cache else 'done'}")
 
     common, speakers, speaker_tags, speaker_map = _build_speaker_groups(annotation)
