@@ -1,6 +1,7 @@
-"""AT: skip_enhance=True omite enhance_audio en el pipeline.
+"""AT: skip_enhance controla si el output _limpio.m4a se enhancee.
 
-Testea core_analysis con skip_enhance flag. Mock de GPU boundaries.
+ASR (diarization, recognition, transcription) NUNCA usa enhance.
+skip_enhance solo afecta el paso de compress para escucha humana.
 """
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -22,13 +23,11 @@ def _make_annotation() -> Annotation:
     return a
 
 
-def _run_core(tmp_path, skip_enhance, enhance_mock):
-    """Helper: corre core_analysis con mocks de GPU."""
+def _run_core(tmp_path, skip_enhance, compress, enhance_mock):
     from speechlib.core_analysis import core_analysis
 
     wav = _make_wav(tmp_path / "audio.wav")
     annotation = _make_annotation()
-    mock_pipeline = MagicMock(return_value=annotation)
 
     with (
         patch("speechlib.core_analysis.enhance_audio", enhance_mock),
@@ -38,6 +37,7 @@ def _run_core(tmp_path, skip_enhance, enhance_mock):
         patch("speechlib.core_analysis.write_log_file"),
         patch("speechlib.core_analysis._publish_domain_artifacts"),
         patch("speechlib.core_analysis._publish_to_source_folder"),
+        patch("speechlib.core_analysis.compress_audio", return_value=None),
     ):
         core_analysis(
             file_name=str(wav),
@@ -46,18 +46,26 @@ def _run_core(tmp_path, skip_enhance, enhance_mock):
             language="es",
             ACCESS_TOKEN="token",
             skip_enhance=skip_enhance,
+            compress=compress,
         )
 
 
 def test_skip_enhance_true_does_not_call_enhance(tmp_path):
-    """Con skip_enhance=True, enhance_audio no se invoca."""
+    """Con skip_enhance=True y compress=True, enhance_audio no se invoca."""
     mock_enhance = MagicMock()
-    _run_core(tmp_path, skip_enhance=True, enhance_mock=mock_enhance)
+    _run_core(tmp_path, skip_enhance=True, compress=True, enhance_mock=mock_enhance)
     mock_enhance.assert_not_called()
 
 
-def test_skip_enhance_false_calls_enhance(tmp_path):
-    """Sin skip_enhance (default), enhance_audio se invoca."""
+def test_skip_enhance_false_with_compress_calls_enhance(tmp_path):
+    """Con skip_enhance=False y compress=True, enhance_audio se invoca para el output."""
     mock_enhance = MagicMock(side_effect=lambda s: s.model_copy(update={"is_enhanced": True}))
-    _run_core(tmp_path, skip_enhance=False, enhance_mock=mock_enhance)
+    _run_core(tmp_path, skip_enhance=False, compress=True, enhance_mock=mock_enhance)
     mock_enhance.assert_called_once()
+
+
+def test_no_compress_no_enhance(tmp_path):
+    """Sin compress, enhance nunca se invoca (no hay output que mejorar)."""
+    mock_enhance = MagicMock()
+    _run_core(tmp_path, skip_enhance=False, compress=False, enhance_mock=mock_enhance)
+    mock_enhance.assert_not_called()
