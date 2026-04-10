@@ -301,9 +301,20 @@ def _run_speaker_recognition_cached(
 ) -> dict:
     """Identifica speakers con cache. I/O shell fino sobre funciones puras."""
     speaker_map_path = state.artifacts_dir / "speaker_map.json"
+    params_path = state.artifacts_dir / "speaker_map_params.json"
 
-    if speaker_map_path.exists():
-        return json.loads(speaker_map_path.read_text(encoding="utf-8"))
+    current_params = {
+        "allowed_speakers": sorted(allowed_speakers) if allowed_speakers else None,
+        "threshold": SPEAKER_SIMILARITY_THRESHOLD,
+        "min_margin": SPEAKER_SIMILARITY_MIN_MARGIN,
+    }
+
+    # Cache hit: speaker_map.json existe Y params no cambiaron
+    if speaker_map_path.exists() and params_path.exists():
+        saved_params = json.loads(params_path.read_text(encoding="utf-8"))
+        if saved_params == current_params:
+            return json.loads(speaker_map_path.read_text(encoding="utf-8"))
+        speaker_map_path.unlink()
 
     voice_library, without_sample = _resolve_voice_library(
         voices_folder, state.is_enhanced, allowed_speakers
@@ -317,6 +328,9 @@ def _run_speaker_recognition_cached(
 
     speaker_map_path.write_text(
         json.dumps(speaker_map, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    params_path.write_text(
+        json.dumps(current_params, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return speaker_map
 

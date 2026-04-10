@@ -71,10 +71,15 @@ class TestSpeakerMapCache:
         voices_dir = tmp_path / "voices"
         voices_dir.mkdir()
 
-        # Crear cache
+        # Crear cache con sidecar de params
         speaker_map_path = state.artifacts_dir / "speaker_map.json"
         speaker_map_path.write_text(
             json.dumps({"SPEAKER_00": "speaker"}), encoding="utf-8"
+        )
+        params_path = state.artifacts_dir / "speaker_map_params.json"
+        params_path.write_text(
+            json.dumps({"allowed_speakers": None, "threshold": 0.55, "min_margin": 0.10}),
+            encoding="utf-8",
         )
 
         speakers = _make_speakers(["SPEAKER_00"])
