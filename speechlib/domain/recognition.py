@@ -134,6 +134,29 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / denom)
 
 
+def build_score_matrix(
+    embeddings_by_tag: dict[str, np.ndarray],
+    voice_library: dict[str, np.ndarray],
+    threshold: float,
+    min_margin: float,
+) -> dict:
+    """Construye matriz de scores para diagnóstico. Puro, JSON-serializable."""
+    tags = {}
+    for tag, emb in embeddings_by_tag.items():
+        scores = {name: round(float(cosine_similarity(emb, v)), 4)
+                  for name, v in voice_library.items()}
+        name, _ = _best_match(emb, voice_library, threshold, min_margin)
+        tags[tag] = {
+            "scores": scores,
+            "decision": name if name else tag,
+        }
+    return {
+        "threshold": threshold,
+        "min_margin": min_margin,
+        "tags": tags,
+    }
+
+
 def _best_match(
     embedding: np.ndarray,
     voice_library: dict[str, np.ndarray],

@@ -30,6 +30,7 @@ from .domain.recognition import (
     assign_extra_speakers,
     assign_speakers,
     average_embeddings,
+    build_score_matrix,
     filter_voice_library,
     select_segments_for_embedding,
 )
@@ -430,6 +431,41 @@ def run_recognition(
     return _run_speaker_recognition_cached(
         state, voices_folder, speakers, speaker_tags,
         allowed_speakers=allowed_speakers,
+    )
+
+
+def run_diagnose(
+    file_name: str,
+    voices_folder: str,
+    *,
+    allowed_speakers: list[str] | None = None,
+) -> dict:
+    """Genera matriz de scores de recognition sin modificar artifacts."""
+    state = AudioState(source_path=Path(file_name), working_path=Path(file_name))
+    state.artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    rttm_path = state.artifacts_dir / "diarization.rttm"
+    if not rttm_path.exists():
+        raise FileNotFoundError(f"No diarization.rttm in {state.artifacts_dir}. Run full pipeline first.")
+    annotation = next(iter(_load_rttm(str(rttm_path)).values()))
+
+    for candidate in ("enhanced.wav", "16k.wav"):
+        p = state.artifacts_dir / candidate
+        if p.exists():
+            state = state.model_copy(update={"working_path": p, "is_wav": True})
+            break
+
+    _, speakers, speaker_tags, _ = _build_speaker_groups(annotation)
+
+    voice_library, without_sample = _resolve_voice_library(
+        voices_folder, state.is_enhanced, allowed_speakers
+    )
+    embeddings_by_tag = _compute_averaged_embeddings_per_tag(state, speakers)
+
+    return build_score_matrix(
+        embeddings_by_tag, voice_library,
+        threshold=SPEAKER_SIMILARITY_THRESHOLD,
+        min_margin=SPEAKER_SIMILARITY_MIN_MARGIN,
     )
 
 

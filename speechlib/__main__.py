@@ -145,5 +145,28 @@ def recognize(
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+@app.command()
+def diagnose(
+    file: _file_arg,
+    voices_folder: _voices_opt = None,
+    speakers: _speakers_opt = None,
+    verbose: _verbose_opt = False,
+):
+    """Show speaker recognition score matrix (read-only, no artifacts modified)."""
+    _setup_logging(verbose)
+    from .core_analysis import run_diagnose
+
+    if voices_folder is None:
+        raise typer.BadParameter("--voices-folder required for diagnose.", param_hint="--voices-folder")
+
+    result = run_diagnose(
+        file_name=str(file),
+        voices_folder=str(voices_folder),
+        allowed_speakers=_parse_speakers(speakers),
+    )
+    import json
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 if __name__ == "__main__":
     app()
