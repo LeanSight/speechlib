@@ -13,6 +13,7 @@ app = typer.Typer(
     name="speechlib",
     help="Transcribe audio with speaker diarization and recognition.",
     rich_markup_mode="rich",
+    invoke_without_command=True,
 )
 
 
@@ -52,16 +53,34 @@ def _resolve_token(token: Optional[str]) -> str:
     return resolved
 
 
+# Shared options reusable across subcommands
+_file_arg = Annotated[Path, typer.Argument(
+    exists=True, file_okay=True, dir_okay=False, readable=True,
+    help="Audio file to transcribe",
+)]
+_voices_opt = Annotated[Optional[Path], typer.Option(
+    exists=True, file_okay=False, dir_okay=True, readable=True,
+    help="Folder with speaker voice samples",
+)]
+_speakers_opt = Annotated[Optional[str], typer.Option(
+    help="Comma-separated expected attendees (filters voice library)",
+)]
+_verbose_opt = Annotated[bool, typer.Option("-v", "--verbose", help="Show detailed progress")]
+
+
+def _parse_speakers(speakers: Optional[str]) -> list[str] | None:
+    return [s.strip() for s in speakers.split(",")] if speakers else None
+
+
+@app.callback()
+def callback():
+    """Speechlib: transcribe audio with speaker diarization and recognition."""
+
+
 @app.command()
-def main(
-    file: Annotated[Path, typer.Argument(
-        exists=True, file_okay=True, dir_okay=False, readable=True,
-        help="Audio file to transcribe",
-    )],
-    voices_folder: Annotated[Optional[Path], typer.Option(
-        exists=True, file_okay=False, dir_okay=True, readable=True,
-        help="Folder with speaker voice samples",
-    )] = None,
+def run(
+    file: _file_arg,
+    voices_folder: _voices_opt = None,
     log_folder: Annotated[Optional[Path], typer.Option(
         help="Output folder (default: <file_dir>/output)",
     )] = None,
@@ -73,20 +92,16 @@ def main(
     output_format: Annotated[OutputFormat, typer.Option(
         help="Output format",
     )] = OutputFormat.vtt,
-    skip_enhance: Annotated[bool, typer.Option(help="Skip audio enhancement")] = False,
+    skip_enhance: Annotated[bool, typer.Option(help="Skip enhancement on output")] = False,
     compress: Annotated[bool, typer.Option(help="Generate compressed _limpio.m4a")] = False,
     quantization: Annotated[bool, typer.Option(help="Use int8 quantization")] = False,
     grouping: Annotated[Grouping, typer.Option(help="Grouping mode")] = Grouping.sentences,
-    speakers: Annotated[Optional[str], typer.Option(
-        help="Comma-separated expected attendees (filters voice library)",
-    )] = None,
-    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Show detailed progress")] = False,
+    speakers: _speakers_opt = None,
+    verbose: _verbose_opt = False,
 ):
-    """Transcribe audio with speaker diarization and recognition."""
+    """Full pipeline: preprocess, diarize, recognize, transcribe, publish."""
     _setup_logging(verbose)
     resolved_token = _resolve_token(token)
-
-    allowed_speakers = [s.strip() for s in speakers.split(",")] if speakers else None
 
     core_analysis(
         file_name=str(file),
@@ -101,7 +116,7 @@ def main(
         skip_enhance=skip_enhance,
         compress=compress,
         grouping_mode=grouping.value,
-        allowed_speakers=allowed_speakers,
+        allowed_speakers=_parse_speakers(speakers),
     )
 
 

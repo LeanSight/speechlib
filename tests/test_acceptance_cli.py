@@ -10,7 +10,7 @@ runner = CliRunner()
 
 def _invoke(*args: str):
     from speechlib.__main__ import app
-    return runner.invoke(app, list(args))
+    return runner.invoke(app, ["run"] + list(args))
 
 
 class TestPreflightValidation:
