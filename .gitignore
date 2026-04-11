@@ -95,3 +95,6 @@ temp/
 examples/.*/
 examples/*_limpio.vtt
 examples/*_limpio.txt
+
+# uv lockfile (speechlib no usa uv como source of truth)
+uv.lock
