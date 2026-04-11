@@ -15,10 +15,13 @@ iterativamente con un agente guiado por el usuario.
 
 ## 1. Qué es speechlib
 
-Librería + CLI Python. Tres pasos: diarización (`pyannote`) → speaker
+Librería + CLI Python. Cuatro pasos: diarización (`pyannote`) → speaker
 recognition (cosine similarity de embeddings contra una voice library
-opcional) → transcripción (`faster-whisper`). Output: `.vtt` o `.txt`
-con `[Nombre real] texto...` (o `[SPEAKER_00]` sin voice library).
+opcional, **produce sugerencias**, no decide) → transcripción
+(`faster-whisper`) → confirmación humana opcional para asignar nombres
+reales. Output `.vtt`/`.txt`: por default tiene `[SPEAKER_00]`,
+`[SPEAKER_01]`, etc. Tras correr `confirm` con un `speaker_map.json`
+escrito por vos, los tags mapeados se reemplazan por nombres reales.
 
 ---
 
@@ -47,8 +50,10 @@ con `[Nombre real] texto...` (o `[SPEAKER_00]` sin voice library).
 
 ### Opcional
 
-- **Voice library** (`--voices-folder`): para nombres reales en el
-  output en vez de `SPEAKER_00/01/...`. Ver sección 5.
+- **Voice library** (`--voices-folder`): para que el pipeline produzca
+  sugerencias de identidad de cada cluster (top-3 candidatos + score)
+  que vos confirmás vía `confirm` para obtener nombres reales en el VTT
+  final. Ver secciones 3, 5 y 7.
 
 ---
 
@@ -74,13 +79,17 @@ etapa indicando cache reuse vs recompute.
 Sin voice library el VTT trae `[SPEAKER_00]`, `[SPEAKER_01]`, etc. Para
 nombres reales necesitás voice library (sección 5).
 
-### Flujo recomendado la primera vez (con voice library parcial)
+### Flujo suggest + confirm con voice library
+
+> ⚠️ **Cambio de comportamiento (2026-04-11)**: `run` ya **no aplica
+> nombres automáticamente** al VTT incluso con voice library. Produce
+> sugerencias y un VTT con `[SPEAKER_XX]` crudo. La asignación de
+> nombres reales pasa por el subcomando nuevo `confirm`, después de que
+> vos editás un `speaker_map.json` basado en las sugerencias.
 
 Caso típico: tenés samples de **algunos** asistentes pero no todos.
 
-1. **Creá la carpeta `voices/`** en cualquier lado (raíz del proyecto,
-   home, donde te convenga). Path relativo o absoluto — da igual.
-   Adentro, un subdirectorio por speaker con los samples que tengas:
+1. **Creá la carpeta `voices/`** con un subdirectorio por speaker:
 
    ```
    voices/
@@ -90,9 +99,7 @@ Caso típico: tenés samples de **algunos** asistentes pero no todos.
        └── clip1.wav
    ```
 
-2. **Corré `run` con `--speakers` listando TODOS los asistentes** (con
-   samples y sin samples), en el orden del que más habla primero si lo
-   sabés:
+2. **Corré `run` con `--speakers`** listando los asistentes:
 
    ```bash
    python -m speechlib run reunion.m4a \
@@ -101,21 +108,61 @@ Caso típico: tenés samples de **algunos** asistentes pero no todos.
      -v
    ```
 
-   Ana y Bruno matchean por embedding; Carla y Diego (sin samples) se
-   asignan por descarte a los `SPEAKER_XX` restantes por cantidad de
-   segmentos (ver sección 6).
+   El pipeline computa scores contra la voice library, escribe
+   `<cache>/speaker_map_suggestions.json` con top-3 candidatos y
+   `recommended` por cluster, y publica el VTT con `[SPEAKER_XX]` crudo.
+   El mensaje del CLI dice `Speaker suggestions — N/M recommended`.
 
-3. **Revisá el VTT** en `<audio_dir>/<stem>_limpio.vtt` (ej.
-   `audios/reunion_limpio.vtt` si el audio era `audios/reunion.m4a`).
-   Si los 4 nombres aparecen correctamente, listo. Si un speaker
-   aparece como `SPEAKER_02` o con nombre incorrecto, pasá al workflow
-   iterativo (sección 7).
+3. **Revisá el JSON de sugerencias**:
+
+   ```bash
+   cat audios/.reunion/speaker_map_suggestions.json
+   ```
+
+   Te da, por cada cluster pyannote: top-3 candidatos con scores y un
+   `recommended` (que es `null` si el match es ambiguo o bajo threshold).
+
+4. **Escribí tu propio `speaker_map.json`** en el cache, con tus
+   decisiones finales:
+
+   ```bash
+   cat > audios/.reunion/speaker_map.json <<'EOF'
+   {
+     "SPEAKER_00": "Ana",
+     "SPEAKER_01": "Bruno",
+     "SPEAKER_02": "Carla Lopez",
+     "SPEAKER_03": "Diego"
+   }
+   EOF
+   ```
+
+   Para clusters que no querés mapear todavía (o que son ruido),
+   omitilos del JSON o mapealos a sí mismos (`"SPEAKER_04": "SPEAKER_04"`)
+   — quedan literales en el VTT.
+
+5. **Confirmá**:
+
+   ```bash
+   python -m speechlib confirm reunion.m4a
+   ```
+
+   Regenera `<audio_dir>/<stem>_limpio.vtt` con los nombres reales
+   aplicados a los clusters mapeados, y deja `[SPEAKER_XX]` literal en
+   los no mapeados.
+
+Si después del paso 5 querés cambiar algo (renombrar, marcar uno como
+no identificado), editá el `speaker_map.json` y re-corré `confirm`. Es
+barato — segundos.
 
 ---
 
-## 4. Los 3 subcomandos
+## 4. Los 4 subcomandos
 
-### `run` — pipeline completo
+### `run` — pipeline completo (produce sugerencias, no aplica)
+
+Corre preprocess + diarize + (recognition score matrix si hay
+voices_folder) + transcribe + publica VTT crudo + suggestions JSON.
+**No** aplica nombres reales al VTT — eso lo hace `confirm`.
 
 ```bash
 python -m speechlib run <audio_file> [opciones]
@@ -134,10 +181,10 @@ python -m speechlib run <audio_file> [opciones]
 | `--token hf_xxx` | `$HF_TOKEN` | Solo si no tenés env var. |
 | `-v` | off | Logs por etapa. Recomendado primera vez. |
 
-### `recognize` — re-ejecuta solo speaker recognition
+### `recognize` — re-ejecuta solo speaker recognition (suggestions)
 
-Re-computa el mapeo `SPEAKER_XX → nombre` sin re-diarizar ni
-re-transcribir.
+Re-computa el `speaker_map_suggestions.json` sin re-diarizar ni
+re-transcribir. Imprime el suggestions dict como JSON.
 
 ```bash
 python -m speechlib recognize <audio_file> --voices-folder voices/ [--force]
@@ -145,9 +192,27 @@ python -m speechlib recognize <audio_file> --voices-folder voices/ [--force]
 
 Usá el **mismo path** que en `run` (lo necesita para el cache `.<stem>/`).
 
-**Cuándo**: cambiaste la voice library, `--speakers`, o threshold/min_margin.
-`--force` es redundante en teoría (el cache se invalida automáticamente vía
-`speaker_map_params.json`) pero lo usamos como seguro al iterar.
+**Cuándo**: cambiaste la voice library, `--speakers`, o threshold/min_margin
+y querés ver las nuevas sugerencias sin re-correr todo el pipeline.
+`--force` borra el cache de suggestions para forzar recomputo aunque los
+params no hayan cambiado (seguro al iterar). **No regenera el VTT** —
+para eso editás `speaker_map.json` y corrés `confirm`.
+
+### `confirm` — aplica el speaker_map.json del usuario al VTT
+
+```bash
+python -m speechlib confirm <audio_file>
+```
+
+Lee `<cache>/speaker_map.json` (escrito por vos basado en
+`speaker_map_suggestions.json`), aplica el mapeo a los segments del
+transcript cacheado, regenera `transcript_<lang>.vtt` en el cache, y
+re-publica `<stem>_limpio.vtt` al lado del audio. Tags ausentes del map
+quedan como `[SPEAKER_XX]` literal. El JSON del usuario no se modifica.
+
+**Errores claros**: si falta `speaker_map.json` o `transcript.json` en
+el cache, el comando avisa con un mensaje accionable. La precondición
+es haber corrido `run` antes.
 
 ### `diagnose` — matriz de scores (read-only)
 
@@ -251,53 +316,78 @@ VTT: un tag agrupando dos voces (fusión) o dos tags para una voz (partición).
 
 ---
 
-## 7. Workflow iterativo con agente — ajustar speaker recognition
+## 7. Workflow iterativo con agente — ajustar speaker_map.json
 
-Este es el patrón cuando recognition falla en algún speaker y querés
-arreglarlo sin repetir el pipeline entero.
+Patrón cuando las sugerencias automáticas no aciertan en todos los
+speakers y querés iterar sin repetir el pipeline entero.
 
-**Roles en el loop**: **vos** corrés los comandos del CLI (`diagnose`,
-`recognize --force`). El **"agente"** (Claude Code u otro LLM agente)
-interpreta los scores, propone cambios de threshold, y edita
-`speaker_recognition.py` por vos.
+**Diferencia clave con el flujo viejo**: ya no se itera bajando
+thresholds. El loop ahora es **edición del `speaker_map.json` + `confirm`**.
+La decisión humana es explícita y reversible: cada commit del map
+regenera el VTT en segundos.
 
-**Punto de entrada concreto**: no hay un comando `speechlib agent` —
-abrís Claude Code en la terminal del proyecto, corrés `diagnose` en
-otra ventana, y le pegás el output al agente (o le pedís "leé
-`<audio_dir>/.<stem>/recognition_diagnostics.json`"). Vos y el agente
-coordinan turnándose, no hay automación del lado del CLI.
+**Roles**: **vos** editás `speaker_map.json` y corrés `confirm`. El
+**agente** (Claude Code u otro LLM) lee `speaker_map_suggestions.json` /
+`recognition_diagnostics.json` / los clips de `samples/` y te propone
+matches con razones, pero **no** decide solo.
 
-**Cuándo empieza**: después de una corrida de `run` donde ves un
-speaker con nombre incorrecto o `SPEAKER_XX` esperando nombre.
-**Cuándo termina**: cuando tu VTT tiene todos los nombres correctos
-o decidís que el fix requiere reenrolar (no params).
+**Cuándo empieza**: después de una corrida de `run` donde ves
+sugerencias dudosas o clusters sin `recommended` que vos sí podés
+identificar escuchando los clips.
+**Cuándo termina**: cuando tu `speaker_map.json` cubre todos los
+clusters que querés nombrar.
 
-> ⚠️ **Trampa antes de iterar**: si cambiás el **conteo** de
+> ⚠️ **Trampa antes de re-correr `run`**: si cambiás el **conteo** de
 > `--speakers` (ej. 4 → 5), `diarization.rttm` NO se invalida
-> automáticamente. Borralo a mano. Si solo tocás threshold/min_margin/samples,
-> no hace falta.
+> automáticamente. Borralo a mano. (`confirm` solo trabaja sobre
+> el cache existente, no toca diarization.)
 
 ### Ciclo de iteración
 
-**Precondición**: ya corriste `run` al menos una vez (para que
-`diarization.rttm` esté en cache; `diagnose` lo reusa).
+**Precondición**: ya corriste `run` al menos una vez con
+`--voices-folder`, así existen `speaker_map_suggestions.json` y
+`transcript.json` en el cache.
 
-1. **Inspeccionar**: `python -m speechlib diagnose reunion.m4a --voices-folder voices/`.
-2. **Usuario guía al agente**: "Ana Pérez aparece como SPEAKER_02, mirá
-   el JSON y decime por qué no matchea."
-3. **Agente lee el JSON, detecta el patrón, reporta y pregunta antes de
-   actuar**: "Ana top1=0.5012 bajo threshold; margin vs Bruno=0.019.
-   ¿Bajar threshold a 0.48 o reenrolar Ana primero?"
-4. **Usuario decide**. Si baja threshold: agente edita
-   `SPEAKER_SIMILARITY_THRESHOLD` en `speechlib/speaker_recognition.py`
-   (no hay flag CLI — ver sección 11). El cambio se activa en la
-   próxima corrida (cada invocación es proceso nuevo que re-importa).
-5. **Re-correr** `recognize --force` y `diagnose` para verificar.
-6. **Iterar** hasta que todos los speakers esperados aparezcan.
+1. **Inspeccionar las sugerencias**:
+   ```bash
+   cat audios/.reunion/speaker_map_suggestions.json
+   ```
+   Ves top-3 candidatos + recommended por cluster. Para cada uno donde
+   `recommended` sea `null` o sospechoso, escuchá los clips en
+   `audios/.reunion/samples/SPEAKER_XX/clip_*.wav`.
 
-**Reglas**: agente muestra data antes de proponer; usuario decide el
-trade-off; usar `recognize --force` (no `run`) para iterar; si el
-problema son los samples (no threshold), reenrolar antes de tocar params.
+2. **Pedile contexto al agente**:
+   > "SPEAKER_02 tiene recommended=null. Top1 Ana 0.51, top2 Bruno 0.50.
+   > ¿Es Ana, Bruno, o ninguno? Mirá el JSON y los clips."
+
+3. **Agente lee el JSON + escucha clips (via path)** y reporta sus
+   hipótesis con razones, sin proponer cambio automático.
+
+4. **Vos decidís** y editás `speaker_map.json` con tu decisión:
+   ```json
+   {
+     "SPEAKER_00": "Ana",
+     "SPEAKER_01": "Bruno",
+     "SPEAKER_02": "Ana"
+   }
+   ```
+
+5. **Re-confirmá**:
+   ```bash
+   python -m speechlib confirm reunion.m4a
+   ```
+   El VTT se regenera en segundos. Releé el output.
+
+6. **Iterar** hasta que el VTT te conforme.
+
+**Si el problema son los samples** (todos los scores <0.40 contra el
+speaker esperado), reenrolá: agregá un `.wav` nuevo a `voices/Ana/` y
+corré `recognize --force` para regenerar las suggestions con embeddings
+frescos. Después seguís editando el `speaker_map.json` desde el paso 4.
+
+**Reglas**: el agente nunca edita `speaker_map.json` por vos sin
+mostrarte la decisión y la razón primero; vos sos quien commitea el map;
+`confirm` es barato (segundos) y reversible — usalo libremente.
 
 ### Threshold vs min_margin
 
@@ -331,10 +421,19 @@ embeddings mal definidos.
 ## 8. Cache y artefactos
 
 Cada corrida crea `<audio_dir>/.<stem>/` con artefactos reutilizables:
-`diarization.rttm` (output crudo de pyannote), `speaker_map.json` +
-`speaker_map_params.json` (mapeo + sidecar de params), y
-`recognition_diagnostics.json` (matriz de scores). Cambiar `--speakers`,
-threshold o min_margin invalida `speaker_map.json` automáticamente vía
+
+- `16k.wav` — audio post-loudnorm (input al embedding model + transcribe).
+- `diarization.rttm` — output crudo de pyannote.
+- `speaker_map_suggestions.json` — sugerencias top-3 + recommended por cluster (escrito por `run` y `recognize` cuando hay voice library).
+- `speaker_map_params.json` — sidecar con los params usados (allowed_speakers, threshold, min_margin) para invalidar el cache de suggestions.
+- `recognition_diagnostics.json` — matriz completa de scores (formato más rico).
+- `transcript.json` — aggregate Transcript (segments con SpeakerIdentity).
+- `transcript_<lang>.vtt` — VTT en el cache, fuente de la copia publicada.
+- `samples/SPEAKER_XX/clip_*.wav` — clips por cluster para inspección humana.
+- `speaker_map.json` — **lo escribe el usuario** (no el pipeline). Lo lee `confirm`.
+
+**Cache invalidation automática**: cambiar `--speakers`, threshold o
+min_margin invalida `speaker_map_suggestions.json` automáticamente vía
 el sidecar.
 
 ⚠️ **Excepción crítica — `diarization.rttm` no se invalida automáticamente**
@@ -353,15 +452,19 @@ Si solo tocás threshold/min_margin/samples, no hace falta borrarlo.
 
 ## 9. Gotchas comunes
 
+- **El VTT inicial sale con `[SPEAKER_XX]` crudo aunque uses
+  `--voices-folder`** — eso es esperado. Para nombres reales, escribí
+  `speaker_map.json` y corré `confirm`. Ver sección 3 paso 4-5.
 - **El VTT sale como `<stem>_limpio.vtt` aunque NO pases `--compress`**.
   Buscalo al lado del audio, no en `output/`.
 - **`--speakers` con nombres inexistentes es silencioso**: si pasás un
-  nombre que no tiene subcarpeta en `voices/`, el CLI no falla — lo
-  pone en cola de asignación por descarte. Verificá nombres con
-  `ls voices/` antes de correr, o mirá `recognition_diagnostics.json`
-  después (los speakers con embeddings aparecen como keys).
+  nombre que no tiene subcarpeta en `voices/`, el CLI no falla — el
+  speaker queda como candidato sin embedding en el `speaker_map_suggestions.json`.
+  Verificá nombres con `ls voices/` antes de correr.
 - **`recognize` sin haber corrido `run` antes** falla — necesita
-  `diarization.rttm` cacheado. Corré `run` al menos una vez primero.
+  `diarization.rttm` cacheado.
+- **`confirm` sin `speaker_map.json` previo** falla con mensaje claro —
+  tenés que escribir el map vos basado en `speaker_map_suggestions.json`.
 - **Samples en contexto acústico muy distinto al audio**: error
   silencioso más común. Ver sección 5.
 
@@ -374,7 +477,7 @@ Si solo tocás threshold/min_margin/samples, no hace falta borrarlo.
 | `HF_TOKEN not set` | `export HF_TOKEN=hf_...` o `--token hf_...` |
 | `401 Unauthorized` bajando pyannote | Aceptar licencias (sección 2) |
 | `WinError 1314` (Windows) | Correr como Administrador la primera vez (Avanzado) |
-| Output con `SPEAKER_XX` esperando nombres | `diagnose` → workflow sección 7 |
+| Output con `SPEAKER_XX` esperando nombres | Es esperado tras `run`. Escribí `speaker_map.json` y corré `confirm` (sección 3) |
 | Transcripción con alucinaciones | Verificar `--language`; si es muy ruidoso, `--model medium` |
 | Speaker nunca matchea (score <0.40) | Reenrolar con samples del mismo contexto acústico |
 | Diarización parte un turno en dos | Pasar `--speakers` con conteo exacto |
@@ -388,13 +491,20 @@ Para empezar de cero borrá la cache: `rm -rf audios/.reunion/` (o
 
 Hardcoded en `speechlib/speaker_recognition.py`:
 
-- `SPEAKER_SIMILARITY_THRESHOLD = 0.55` — score mínimo para match.
-- `SPEAKER_SIMILARITY_MIN_MARGIN = 0.10` — diferencia top1-top2 mínima.
-- `MIN_SEGMENT_DURATION_S = 0.5` — turnos más cortos se ignoran **solo
-  para recognition** (el segmento sigue en el VTT con tag crudo).
+- `SPEAKER_SIMILARITY_THRESHOLD = 0.55` — score mínimo para que
+  `recommended` no sea `null` en el suggestions JSON. **Ya no afecta el
+  VTT** (el VTT crudo sale igual con o sin match recommended).
+- `SPEAKER_SIMILARITY_MIN_MARGIN = 0.10` — diferencia top1-top2 mínima
+  para tomar `recommended`. Mismo scope: solo afecta el campo
+  `recommended` de las sugerencias, no el VTT.
+- `MIN_SEGMENT_DURATION_S = 0.5` — turnos pyannote más cortos se ignoran
+  para computar embeddings (el segmento sigue en el VTT con tag crudo).
 
 Los dos primeros no tienen flag CLI — editar el archivo es la única
-forma. Deuda técnica conocida.
+forma. Como ya no se aplican al VTT automáticamente, su impacto es
+limitado a la "recomendación" que ves en el suggestions JSON. Si vos
+sabés mejor, ignorá el `recommended` y escribí tu propio
+`speaker_map.json`.
 
 **Dónde encontrar el archivo**:
 - **Dev install** (`pip install -e .` desde un clone): en el repo
