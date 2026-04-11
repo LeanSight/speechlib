@@ -62,6 +62,33 @@ def run_with_voices(tmp_path):
     return tmp_audio, tmp_cache
 
 
+@pytest.fixture
+def run_with_voices_for_confirm(tmp_path):
+    """Variante de run_with_voices que el test de confirm consume.
+
+    Separada para no compartir state con el test de Behavior 1.
+    """
+    from speechlib.core_analysis import core_analysis
+
+    tmp_audio = tmp_path / AUDIO.name
+    shutil.copy2(AUDIO, tmp_audio)
+
+    tmp_cache = tmp_path / f".{AUDIO.stem}"
+    shutil.copytree(CACHE_FIXTURE, tmp_cache)
+
+    core_analysis(
+        str(tmp_audio),
+        voices_folder=str(VOICES),
+        log_folder=str(tmp_path / "logs"),
+        language="en",
+        modelSize="base",
+        ACCESS_TOKEN=None,
+        model_type="faster-whisper",
+        skip_enhance=True,
+    )
+    return tmp_audio, tmp_cache
+
+
 @needs_artifacts
 def test_run_with_voices_produces_raw_vtt_and_suggestions(run_with_voices):
     """run con voices_folder:
@@ -115,3 +142,55 @@ def test_run_with_voices_produces_raw_vtt_and_suggestions(run_with_voices):
                 f"speaker_map.json debe ser identity (tag==name) o ausente, "
                 f"pero encontre {tag} -> {name}"
             )
+
+
+@needs_artifacts
+def test_confirm_applies_user_speaker_map_to_vtt(run_with_voices_for_confirm):
+    """Behavior 2: confirm aplica speaker_map.json (escrito por usuario)
+    al VTT publicado, mapeando los tags presentes en el map a nombres
+    reales y manteniendo los unmapped como [SPEAKER_XX] literal.
+    """
+    from typer.testing import CliRunner
+    from speechlib.__main__ import app
+
+    tmp_audio, tmp_cache = run_with_voices_for_confirm
+
+    # Leer suggestions para descubrir los tags reales que produjo el pipeline
+    suggestions = json.loads(
+        (tmp_cache / "speaker_map_suggestions.json").read_text(encoding="utf-8")
+    )
+    all_tags = sorted(suggestions["tags"].keys())
+    assert len(all_tags) >= 2, f"esperaba >=2 tags pyannote: {all_tags}"
+
+    mapped_tag = all_tags[0]
+    unmapped_tag = all_tags[1]
+
+    # Usuario escribe su speaker_map.json: solo mapea uno
+    user_map = {mapped_tag: "TestPersonAlpha"}
+    map_path = tmp_cache / "speaker_map.json"
+    map_path.write_text(json.dumps(user_map), encoding="utf-8")
+
+    # Invocar `speechlib confirm <audio>`
+    runner = CliRunner()
+    result = runner.invoke(app, ["confirm", str(tmp_audio)])
+    assert result.exit_code == 0, (
+        f"confirm fallo (exit_code={result.exit_code}). Output:\n{result.output}"
+    )
+
+    # VTT publicado debe tener TestPersonAlpha aplicado
+    vtt_path = tmp_audio.parent / f"{tmp_audio.stem}_limpio.vtt"
+    assert vtt_path.exists(), f"VTT no publicado: {vtt_path}"
+    vtt_content = vtt_path.read_text(encoding="utf-8")
+    assert "[TestPersonAlpha]" in vtt_content, (
+        f"VTT esperaba [TestPersonAlpha] aplicado tras confirm. "
+        f"Contenido (primeros 800 chars): {vtt_content[:800]}"
+    )
+
+    # El cluster no mapeado permanece literal
+    assert f"[{unmapped_tag}]" in vtt_content, (
+        f"VTT esperaba [{unmapped_tag}] literal (cluster sin mapear). "
+        f"Contenido (primeros 800 chars): {vtt_content[:800]}"
+    )
+
+    # speaker_map.json del usuario NO se modifica
+    assert json.loads(map_path.read_text(encoding="utf-8")) == user_map

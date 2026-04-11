@@ -473,3 +473,73 @@ class TestBuildSuggestions:
         serialized = json.dumps(result)
         assert "ana" in serialized
         assert "top_candidates" in serialized
+
+
+class TestApplySpeakerMapToTranscript:
+    """apply_speaker_map_to_transcript: aplicar map editado por el usuario."""
+
+    def test_maps_tag_to_recognized_name(self):
+        from speechlib.domain.recognition import apply_speaker_map_to_transcript
+
+        transcript = _make_transcript("SPEAKER_00", "SPEAKER_01")
+        speaker_map = {"SPEAKER_00": "obama", "SPEAKER_01": "zach"}
+
+        result = apply_speaker_map_to_transcript(transcript, speaker_map)
+
+        assert result.segments[0].speaker.recognized_name == "obama"
+        assert result.segments[0].speaker.diarization_tag == "SPEAKER_00"
+        assert result.segments[0].speaker.label == "obama"
+        assert result.segments[1].speaker.recognized_name == "zach"
+        assert result.segments[1].speaker.label == "zach"
+
+    def test_unmapped_tag_keeps_speaker_xx_label(self):
+        from speechlib.domain.recognition import apply_speaker_map_to_transcript
+
+        transcript = _make_transcript("SPEAKER_00", "SPEAKER_01")
+        # Solo SPEAKER_00 mapeado
+        speaker_map = {"SPEAKER_00": "obama"}
+
+        result = apply_speaker_map_to_transcript(transcript, speaker_map)
+
+        assert result.segments[0].speaker.label == "obama"
+        # SPEAKER_01 sin mapear → label es el SPEAKER_XX literal
+        assert result.segments[1].speaker.recognized_name is None
+        assert result.segments[1].speaker.label == "SPEAKER_01"
+
+    def test_identity_map_value_keeps_unidentified(self):
+        """Si map[tag] == tag (identity), no se considera 'identificado'."""
+        from speechlib.domain.recognition import apply_speaker_map_to_transcript
+
+        transcript = _make_transcript("SPEAKER_00")
+        # Identity: el usuario no decidió un nombre real
+        speaker_map = {"SPEAKER_00": "SPEAKER_00"}
+
+        result = apply_speaker_map_to_transcript(transcript, speaker_map)
+
+        assert result.segments[0].speaker.recognized_name is None
+        assert result.segments[0].speaker.label == "SPEAKER_00"
+
+    def test_does_not_mutate_input_transcript(self):
+        from speechlib.domain.recognition import apply_speaker_map_to_transcript
+
+        transcript = _make_transcript("SPEAKER_00")
+        speaker_map = {"SPEAKER_00": "obama"}
+
+        result = apply_speaker_map_to_transcript(transcript, speaker_map)
+
+        # Input intacto
+        assert transcript.segments[0].speaker.recognized_name is None
+        # Output diferente
+        assert result.segments[0].speaker.recognized_name == "obama"
+        assert result is not transcript
+
+    def test_extra_keys_in_map_ignored(self):
+        """Map puede tener tags que no aparecen en el transcript — se ignoran."""
+        from speechlib.domain.recognition import apply_speaker_map_to_transcript
+
+        transcript = _make_transcript("SPEAKER_00")
+        speaker_map = {"SPEAKER_00": "obama", "SPEAKER_99": "ghost"}
+
+        # No debe explotar
+        result = apply_speaker_map_to_transcript(transcript, speaker_map)
+        assert result.segments[0].speaker.label == "obama"

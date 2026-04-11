@@ -231,6 +231,39 @@ def _best_match(
     return best_name, best_score
 
 
+def apply_speaker_map_to_transcript(
+    transcript: Transcript,
+    speaker_map: dict[str, str],
+) -> Transcript:
+    """Aplica un speaker_map (tag → name) editado por el usuario al transcript.
+
+    Para cada segment del transcript, si su `diarization_tag` está en
+    `speaker_map` y mapea a un valor distinto al tag mismo, asigna
+    `SpeakerIdentity.recognized_name = speaker_map[tag]`. Tags ausentes del
+    map o mapeados a sí mismos (identity) preservan `recognized_name=None` —
+    `SpeakerIdentity.label` retornará el `SPEAKER_XX` literal.
+
+    Función pura del dominio: cero I/O. Input no se muta.
+
+    Uso típico: `confirm` subcommand carga transcript.json + speaker_map.json
+    escrito por el usuario, llama a esta función, regenera VTT.
+    """
+    new_segments = []
+    for seg in transcript.segments:
+        tag = seg.speaker.diarization_tag
+        mapped_name = speaker_map.get(tag)
+        if mapped_name and mapped_name != tag:
+            new_identity = SpeakerIdentity(
+                diarization_tag=tag,
+                recognized_name=mapped_name,
+                similarity=None,
+            )
+            new_segments.append(seg.with_speaker(new_identity))
+        else:
+            new_segments.append(seg)
+    return transcript.with_segments(tuple(new_segments))
+
+
 def assign_speakers(
     transcript: Transcript,
     embeddings_by_tag: dict[str, np.ndarray],

@@ -27,12 +27,14 @@ from .speaker_recognition import (
 )
 from .audio_utils import slice_and_save
 from .domain.recognition import (
+    apply_speaker_map_to_transcript,
     average_embeddings,
     build_score_matrix,
     build_suggestions,
     filter_voice_library,
     select_segments_for_embedding,
 )
+from .domain.transcript import Transcript
 from .services.transcript_builder import apply_speaker_map_to_segments
 
 try:
@@ -392,6 +394,59 @@ def run_recognition(
         state, voices_folder, speakers, speaker_tags,
         allowed_speakers=allowed_speakers,
     )
+
+
+def run_confirm(file_name: str) -> dict:
+    """Aplica speaker_map.json (editado por usuario) al VTT publicado.
+
+    Lee del cache:
+    - speaker_map.json: dict {SPEAKER_XX: nombre} escrito por el usuario
+    - transcript.json: aggregate Transcript con segments del run previo
+
+    Regenera el VTT en el cache y publica una copia con sufijo _limpio
+    al lado del audio original. Tags ausentes del map (o mapeados a sí
+    mismos) quedan como [SPEAKER_XX] literal en el VTT.
+
+    Retorna el speaker_map aplicado para que el CLI lo imprima.
+    """
+    state = AudioState(source_path=Path(file_name), working_path=Path(file_name))
+    state.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    state = _resolve_working_path_from_cache(state)
+
+    map_path = state.artifacts_dir / "speaker_map.json"
+    if not map_path.exists():
+        raise FileNotFoundError(
+            f"No speaker_map.json en {state.artifacts_dir}. "
+            "Ejecutá `speechlib run` primero, revisá speaker_map_suggestions.json, "
+            "y escribí tu propio speaker_map.json con {SPEAKER_XX: 'nombre real'}."
+        )
+
+    transcript_path = state.artifacts_dir / "transcript.json"
+    if not transcript_path.exists():
+        raise FileNotFoundError(
+            f"No transcript.json en {state.artifacts_dir}. "
+            "Ejecutá `speechlib run` primero."
+        )
+
+    speaker_map = json.loads(map_path.read_text(encoding="utf-8"))
+    transcript = Transcript.load(transcript_path)
+    relabeled = apply_speaker_map_to_transcript(transcript, speaker_map)
+
+    common_segments = [
+        [seg.start_ms / 1000, seg.end_ms / 1000, seg.text, seg.speaker.label]
+        for seg in relabeled.segments
+    ]
+    write_log_file(
+        common_segments,
+        None,
+        str(state.working_path),
+        relabeled.language,
+        "vtt",
+    )
+    relabeled.save(transcript_path)
+    _publish_to_source_folder(state, relabeled.language, "vtt")
+
+    return speaker_map
 
 
 def run_diagnose(

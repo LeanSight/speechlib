@@ -146,6 +146,25 @@ def recognize(
 
 
 @app.command()
+def confirm(
+    file: _file_arg,
+    verbose: _verbose_opt = False,
+):
+    """Apply user-edited speaker_map.json to regenerate VTT with real names.
+
+    Reads <cache>/speaker_map.json (written by the user based on
+    speaker_map_suggestions.json) and rewrites the published VTT applying
+    the mapping. Unmapped clusters stay as [SPEAKER_XX].
+    """
+    _setup_logging(verbose)
+    from .core_analysis import run_confirm
+
+    result = run_confirm(str(file))
+    import json
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+@app.command()
 def diagnose(
     file: _file_arg,
     voices_folder: _voices_opt = None,
