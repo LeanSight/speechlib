@@ -85,7 +85,7 @@ Refactorear speechlib para resolver el problema de **false positives en speaker 
 
 1. **Enhancement perjudica ASR** — validado con A/B test en 2 audios con SRT de referencia.
 2. **Loudnorm es neutral/positivo** — mantener, costo trivial.
-3. **GPU contention real** — en RTX 2070 (2560 SMs), dos modelos en paralelo no ganan vs secuencial.
+3. **GPU contention real** — en RTX 2070 (36 SMs, 2304 CUDA cores), dos modelos en paralelo no ganan vs secuencial.
 4. **torchaudio 2.10 en Windows**: torchcodec no funciona, requiere shim PyAV en compat.py.
 5. **speechbrain 1.0.3 requiere list_audio_backends shim** — no upgradeable a 1.1.0 por bug k2_fsa.
 6. **Cache por etapas funciona**: 16k.wav, enhanced.wav, diarization.rttm, speaker_map.json cada uno con su ciclo de vida.
