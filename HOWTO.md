@@ -78,10 +78,15 @@ Podés correrlo desde cualquier directorio con path relativo o absoluto.
 - Preprocesa a 16 kHz + loudnorm.
 - Diariza con `pyannote/speaker-diarization-community-1`.
 - Transcribe con `faster-whisper` / `large-v3-turbo`.
-- Guarda `<audio_dir>/output/transcript_<lang>.vtt` (ej.
-  `output/transcript_es.vtt` con `--language es` default).
-- Cachea artefactos intermedios en `<audio_dir>/.<stem>/` (oculto).
-  Usá `-v` para ver si una etapa reusó cache o recomputó.
+- Guarda el VTT final en `<audio_dir>/<stem>_limpio.vtt` (ej.
+  `Voice 260127.m4a` → `Voice 260127_limpio.vtt`). El sufijo
+  `_limpio` es **automático aunque NO pases `--compress`** — es el
+  naming canónico del output publicado, no implica que haya habido
+  enhancement/compresión (ver §4 y §9).
+- Cachea artefactos intermedios en `<audio_dir>/.<stem>/` (oculto),
+  incluyendo una copia interna `transcript_<lang>.vtt` que es la
+  fuente de la publicación al source folder. Usá `-v` para ver si
+  una etapa reusó cache o recomputó.
 
 **Output sin voice library**:
 ```vtt
@@ -160,7 +165,7 @@ python -m speechlib run <audio_file> [opciones]
 | `--model` | `large-v3-turbo` | Default está bien. Alternativas: `medium`, `small`, `tiny` (más rápido, menos VRAM). |
 | `--output-format` | `vtt` | Alternativa: `txt` (sin timestamps). |
 | `--grouping` | `sentences` | `sentences`: agrupa por oración completa (más legible). `timestamps`: un segmento por timestamp crudo de Whisper (más granular). |
-| `--compress` | off | Genera `{stem}_limpio.m4a` (AAC 96kbps mono 16kHz) al lado del audio original. Para archivo, no afecta la transcripción. |
+| `--compress` | off | Genera **además** `{stem}_limpio.m4a` (AAC 96kbps mono 16kHz) al lado del audio original, para archivo. No afecta la transcripción. **Nota**: el VTT ya usa el sufijo `_limpio.vtt` sin este flag — `--compress` solo agrega el `.m4a`. |
 | `--skip-enhance` | off | Salta el enhancement (MossFormer2) antes de comprimir. **Sin efecto si no pasás `--compress`** — el enhance nunca toca la transcripción. |
 | `--token hf_xxx` | `$HF_TOKEN` | Solo si no tenés la env var. |
 | `-v` / `--verbose` | off | Logs por etapa. Recomendado la primera vez. |
@@ -427,6 +432,12 @@ wav 16 kHz resampled).
 
 ## 9. Gotchas comunes la primera corrida
 
+- **El VTT sale como `<stem>_limpio.vtt` aunque NO pases `--compress`**:
+  el sufijo `_limpio` es el naming canónico del output publicado, no
+  implica que el audio fue enhanced/comprimido. `--compress` solo
+  controla si **además** se genera el `.m4a` comprimido. Si esperabas
+  `output/transcript_es.vtt`, ese path no existe — buscá el `.vtt` al
+  lado del audio.
 - **`--compress` no es gratis**: agrega tiempo sustancial (el enhance
   MossFormer2 corre antes de comprimir). Solo usalo si querés el
   `_limpio.m4a` de archivo.
