@@ -193,7 +193,9 @@ def _compute_averaged_embeddings_per_tag(
     import numpy as np
 
     inference = _get_inference()
-    tmp_dir = Path(state.working_path).parent / "tmp"
+    working_path = Path(state.working_path)
+    audio_stem = working_path.stem
+    tmp_dir = working_path.parent / "tmp"
     tmp_dir.mkdir(exist_ok=True)
 
     embeddings_by_tag: dict = {}
@@ -208,9 +210,7 @@ def _compute_averaged_embeddings_per_tag(
             for i, segment in enumerate(selected):
                 start_ms = segment[0] * 1000
                 end_ms = segment[1] * 1000
-                chunk = str(
-                    tmp_dir / f"{Path(state.working_path).stem}_{spk_tag}_chunk_{i}.wav"
-                )
+                chunk = str(tmp_dir / f"{audio_stem}_{spk_tag}_chunk_{i}.wav")
                 try:
                     slice_and_save(str(state.working_path), start_ms, end_ms, chunk)
                     per_chunk_embeddings.append(np.asarray(inference(chunk)))
