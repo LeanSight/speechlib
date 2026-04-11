@@ -157,6 +157,46 @@ def build_score_matrix(
     }
 
 
+def build_suggestions(
+    embeddings_by_tag: dict[str, np.ndarray],
+    voice_library: dict[str, np.ndarray],
+    threshold: float,
+    min_margin: float,
+    *,
+    top_n: int = 3,
+) -> dict:
+    """Construye sugerencias de speaker recognition para revisión humana.
+
+    A diferencia de build_score_matrix (formato diagnóstico completo), éste
+    retorna solo los top-N candidatos ordenados descendentemente por score
+    más un "recommended" que es el nombre del best_match (o None si el match
+    es ambiguo o bajo threshold). Formato JSON-serializable directo, pensado
+    para el flujo suggest+confirm del subcomando `run`.
+
+    Función pura del dominio: cero I/O.
+    """
+    tags: dict = {}
+    for tag, emb in embeddings_by_tag.items():
+        ranked = sorted(
+            (
+                (name, round(float(cosine_similarity(emb, v)), 4))
+                for name, v in voice_library.items()
+            ),
+            key=lambda kv: -kv[1],
+        )
+        top = ranked[:top_n]
+        recommended, _ = _best_match(emb, voice_library, threshold, min_margin)
+        tags[tag] = {
+            "top_candidates": [{"name": n, "score": s} for n, s in top],
+            "recommended": recommended,
+        }
+    return {
+        "threshold": threshold,
+        "min_margin": min_margin,
+        "tags": tags,
+    }
+
+
 def _best_match(
     embedding: np.ndarray,
     voice_library: dict[str, np.ndarray],

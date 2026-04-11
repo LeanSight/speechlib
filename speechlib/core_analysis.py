@@ -27,19 +27,13 @@ from .speaker_recognition import (
 )
 from .audio_utils import slice_and_save
 from .domain.recognition import (
-    assign_extra_speakers,
-    assign_speakers,
     average_embeddings,
     build_score_matrix,
+    build_suggestions,
     filter_voice_library,
     select_segments_for_embedding,
 )
 from .services.transcript_builder import apply_speaker_map_to_segments
-from .domain.transcript import (
-    SpeakerIdentity,
-    Transcript,
-    TranscriptSegment,
-)
 
 try:
     from pyannote.database.util import load_rttm as _load_rttm
@@ -224,54 +218,6 @@ def _compute_averaged_embeddings_per_tag(
     return embeddings_by_tag
 
 
-def _build_speaker_map(
-    embeddings_by_tag: dict,
-    voice_library: dict,
-    speaker_tags: list,
-    speakers: dict,
-    audio_path: str,
-    *,
-    without_sample: list[str] | None = None,
-) -> dict:
-    """Construye speaker_map a partir de embeddings y voice library. Puro."""
-    transcript = Transcript(
-        segments=tuple(
-            TranscriptSegment(
-                start_ms=int(speakers[tag][0][0] * 1000),
-                end_ms=int(speakers[tag][0][1] * 1000),
-                text="",
-                speaker=SpeakerIdentity(diarization_tag=tag),
-            )
-            for tag in speaker_tags
-            if tag in embeddings_by_tag
-        ),
-        audio_path=audio_path,
-        language="",
-    )
-
-    relabeled = assign_speakers(
-        transcript,
-        embeddings_by_tag,
-        voice_library,
-        threshold=SPEAKER_SIMILARITY_THRESHOLD,
-        min_margin=SPEAKER_SIMILARITY_MIN_MARGIN,
-    )
-
-    speaker_map: dict = {
-        seg.speaker.diarization_tag: seg.speaker.label
-        for seg in relabeled.segments
-    }
-    for spk_tag in speaker_tags:
-        if spk_tag not in speaker_map:
-            speaker_map[spk_tag] = spk_tag
-
-    if without_sample:
-        segment_counts = {tag: len(segs) for tag, segs in speakers.items()}
-        speaker_map = assign_extra_speakers(speaker_map, without_sample, segment_counts)
-
-    return speaker_map
-
-
 def _resolve_voice_library(
     voices_folder: str,
     enhanced: bool,
@@ -294,8 +240,13 @@ def _run_speaker_recognition_cached(
     *,
     allowed_speakers: list[str] | None = None,
 ) -> dict:
-    """Identifica speakers con cache. I/O shell fino sobre funciones puras."""
-    speaker_map_path = state.artifacts_dir / "speaker_map.json"
+    """Computa suggestions + diagnostics con cache. NO decide speaker_map.
+
+    Retorna el dict de suggestions (formato build_suggestions). La aplicación
+    de nombres reales queda al subcomando `confirm`, que lee un speaker_map.json
+    escrito por el usuario.
+    """
+    suggestions_path = state.artifacts_dir / "speaker_map_suggestions.json"
     params_path = state.artifacts_dir / "speaker_map_params.json"
 
     current_params = {
@@ -304,25 +255,25 @@ def _run_speaker_recognition_cached(
         "min_margin": SPEAKER_SIMILARITY_MIN_MARGIN,
     }
 
-    # Cache hit: speaker_map.json existe Y params no cambiaron
-    if speaker_map_path.exists() and params_path.exists():
+    # Cache hit: suggestions + params coinciden
+    if suggestions_path.exists() and params_path.exists():
         saved_params = json.loads(params_path.read_text(encoding="utf-8"))
         if saved_params == current_params:
-            return json.loads(speaker_map_path.read_text(encoding="utf-8"))
-        speaker_map_path.unlink()
+            return json.loads(suggestions_path.read_text(encoding="utf-8"))
+        suggestions_path.unlink()
 
-    voice_library, without_sample = _resolve_voice_library(
+    voice_library, _without_sample = _resolve_voice_library(
         voices_folder, state.is_enhanced, allowed_speakers
     )
     embeddings_by_tag = _compute_averaged_embeddings_per_tag(state, speakers)
 
-    speaker_map = _build_speaker_map(
-        embeddings_by_tag, voice_library, speaker_tags, speakers,
-        str(state.working_path), without_sample=without_sample,
+    suggestions = build_suggestions(
+        embeddings_by_tag, voice_library,
+        threshold=SPEAKER_SIMILARITY_THRESHOLD,
+        min_margin=SPEAKER_SIMILARITY_MIN_MARGIN,
     )
-
-    speaker_map_path.write_text(
-        json.dumps(speaker_map, ensure_ascii=False, indent=2), encoding="utf-8"
+    suggestions_path.write_text(
+        json.dumps(suggestions, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     params_path.write_text(
         json.dumps(current_params, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -338,7 +289,7 @@ def _run_speaker_recognition_cached(
         json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    return speaker_map
+    return suggestions
 
 
 def _build_speaker_groups(annotation):
@@ -432,7 +383,7 @@ def run_recognition(
     state = _resolve_working_path_from_cache(state)
 
     if force:
-        (state.artifacts_dir / "speaker_map.json").unlink(missing_ok=True)
+        (state.artifacts_dir / "speaker_map_suggestions.json").unlink(missing_ok=True)
         (state.artifacts_dir / "speaker_map_params.json").unlink(missing_ok=True)
 
     _, speakers, speaker_tags, _ = _build_speaker_groups(annotation)
@@ -571,14 +522,24 @@ def core_analysis(
 
     has_voices_folder = voices_folder is not None and voices_folder != ""
     if has_voices_folder:
-        with console.status("Speaker recognition..."):
-            speaker_map = _run_speaker_recognition_cached(
+        with console.status("Speaker suggestions..."):
+            suggestions = _run_speaker_recognition_cached(
                 state_loudnorm, voices_folder, speakers, speaker_tags,
                 allowed_speakers=allowed_speakers,
             )
-        recognized = [v for k, v in speaker_map.items() if v != k]
-        console.print(f"[green]OK[/] Speaker recognition — {len(recognized)} identified")
+        n_recommended = sum(
+            1 for s in suggestions.get("tags", {}).values()
+            if s.get("recommended") is not None
+        )
+        total = len(suggestions.get("tags", {}))
+        console.print(
+            f"[green]OK[/] Speaker suggestions — {n_recommended}/{total} "
+            f"recommended (user must confirm via `speechlib confirm`)"
+        )
 
+    # speaker_map sigue siendo el identity map del diarization (tag->tag).
+    # Aplicarlo es no-op sobre los segments, pero preserva el shape del flujo
+    # legacy. La asignación de nombres reales ocurre en el subcomando confirm.
     common = apply_speaker_map_to_segments(common, speaker_map)
     common = absorb_micro_segments(common)
     common = merge_short_turns(common)

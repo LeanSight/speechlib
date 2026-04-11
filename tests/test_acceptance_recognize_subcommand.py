@@ -38,8 +38,8 @@ def _setup_artifacts(tmp_path):
 
 class TestRecognizeSubcommand:
 
-    def test_recognize_reuses_rttm_and_writes_speaker_map(self, tmp_path, monkeypatch):
-        """recognize carga RTTM existente y escribe speaker_map.json."""
+    def test_recognize_reuses_rttm_and_writes_suggestions(self, tmp_path, monkeypatch):
+        """recognize carga RTTM existente y escribe speaker_map_suggestions.json."""
         from speechlib.__main__ import app
 
         wav, state = _setup_artifacts(tmp_path)
@@ -61,11 +61,16 @@ class TestRecognizeSubcommand:
             ])
 
         mock_pipeline.assert_not_called()
-        speaker_map_path = state.artifacts_dir / "speaker_map.json"
-        assert speaker_map_path.exists()
+        suggestions_path = state.artifacts_dir / "speaker_map_suggestions.json"
+        assert suggestions_path.exists()
+        saved = json.loads(suggestions_path.read_text(encoding="utf-8"))
+        assert "tags" in saved
+        for tag_data in saved["tags"].values():
+            assert "top_candidates" in tag_data
+            assert "recommended" in tag_data
 
-    def test_recognize_force_deletes_old_speaker_map(self, tmp_path, monkeypatch):
-        """--force borra speaker_map.json antes de re-ejecutar."""
+    def test_recognize_force_deletes_old_suggestions(self, tmp_path, monkeypatch):
+        """--force borra speaker_map_suggestions.json antes de re-ejecutar."""
         from speechlib.__main__ import app
 
         wav, state = _setup_artifacts(tmp_path)
@@ -73,9 +78,20 @@ class TestRecognizeSubcommand:
         voices.mkdir()
         monkeypatch.setenv("HF_TOKEN", "test")
 
-        # Pre-crear speaker_map viejo
-        old_map = {"SPEAKER_00": "OldName", "SPEAKER_01": "SPEAKER_01"}
-        (state.artifacts_dir / "speaker_map.json").write_text(json.dumps(old_map))
+        # Pre-crear suggestions viejas con un nombre que NO debe aparecer tras force
+        old_suggestions = {
+            "threshold": 0.55,
+            "min_margin": 0.10,
+            "tags": {
+                "SPEAKER_00": {
+                    "top_candidates": [{"name": "OldName", "score": 0.9}],
+                    "recommended": "OldName",
+                },
+            },
+        }
+        (state.artifacts_dir / "speaker_map_suggestions.json").write_text(
+            json.dumps(old_suggestions)
+        )
         (state.artifacts_dir / "speaker_map_params.json").write_text(
             json.dumps({"allowed_speakers": ["OldName"], "threshold": 0.55, "min_margin": 0.10})
         )
@@ -93,5 +109,9 @@ class TestRecognizeSubcommand:
                 "--force",
             ])
 
-        new_map = json.loads((state.artifacts_dir / "speaker_map.json").read_text())
-        assert "OldName" not in new_map.values()
+        new_suggestions = json.loads(
+            (state.artifacts_dir / "speaker_map_suggestions.json").read_text()
+        )
+        # OldName ya no aparece en los top_candidates post-force
+        serialized = json.dumps(new_suggestions)
+        assert "OldName" not in serialized

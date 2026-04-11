@@ -1,7 +1,7 @@
-"""AT: speaker_map.json se invalida cuando cambian los parámetros de recognition.
+"""AT: speaker_map_suggestions.json se invalida cuando cambian los parámetros.
 
 Un sidecar speaker_map_params.json registra los params usados.
-Si los params actuales difieren, speaker_map.json se descarta y se recomputa.
+Si los params actuales difieren, speaker_map_suggestions.json se descarta y se recomputa.
 """
 import json
 from pathlib import Path
@@ -52,13 +52,13 @@ def _run_recognition(state, tmp_path, allowed_speakers=None):
 
 class TestCacheInvalidation:
 
-    def test_speaker_map_invalidated_when_speakers_change(self, tmp_path):
-        """Cambiar --speakers invalida el cache."""
+    def test_suggestions_invalidated_when_speakers_change(self, tmp_path):
+        """Cambiar --speakers invalida el cache de suggestions."""
         state = _make_state(tmp_path)
 
         # Run 1: speakers=["Alice"]
         _run_recognition(state, tmp_path, allowed_speakers=["Alice"])
-        assert (state.artifacts_dir / "speaker_map.json").exists()
+        assert (state.artifacts_dir / "speaker_map_suggestions.json").exists()
         assert (state.artifacts_dir / "speaker_map_params.json").exists()
 
         # Run 2: speakers=["Alice", "Bob"] → debe recomputar

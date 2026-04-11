@@ -377,3 +377,99 @@ class TestMinSegmentDurationConstant:
     def test_value_is_half_second(self):
         from speechlib.speaker_recognition import MIN_SEGMENT_DURATION_S
         assert MIN_SEGMENT_DURATION_S == 0.5
+
+
+class TestBuildSuggestions:
+    """build_suggestions: top-N candidatos + recommended, sin decidir el map.
+
+    Funcion pura del dominio que convierte embeddings + voice library en
+    estructura human-reviewable para el flujo suggest+confirm.
+    """
+
+    def test_clear_match_ranks_top_candidate_first_and_recommends_it(self):
+        from speechlib.domain.recognition import build_suggestions
+
+        embeddings = {"SPEAKER_00": _unit(1.0, 0.0, 0.0)}
+        library = {
+            "ana": _unit(1.0, 0.0, 0.0),
+            "bruno": _unit(0.2, 1.0, 0.0),
+            "carla": _unit(0.0, 0.0, 1.0),
+        }
+
+        result = build_suggestions(embeddings, library, threshold=0.5, min_margin=0.1)
+
+        tags = result["tags"]
+        assert set(tags.keys()) == {"SPEAKER_00"}
+        top = tags["SPEAKER_00"]["top_candidates"]
+        assert len(top) == 3
+        assert top[0]["name"] == "ana"
+        assert top[0]["score"] == pytest.approx(1.0, abs=1e-3)
+        assert top[1]["name"] == "bruno"
+        assert top[2]["name"] == "carla"
+        assert top[0]["score"] > top[1]["score"] > top[2]["score"]
+        assert tags["SPEAKER_00"]["recommended"] == "ana"
+
+    def test_ambiguous_match_recommends_none(self):
+        from speechlib.domain.recognition import build_suggestions
+
+        # embedding a 45 grados entre ana y bruno → ambiguo
+        embeddings = {"SPEAKER_00": _unit(1.0, 1.0, 0.0)}
+        library = {
+            "ana": _unit(1.0, 0.0, 0.0),
+            "bruno": _unit(0.0, 1.0, 0.0),
+            "carla": _unit(0.0, 0.0, 1.0),
+        }
+
+        result = build_suggestions(embeddings, library, threshold=0.5, min_margin=0.1)
+
+        suggestion = result["tags"]["SPEAKER_00"]
+        # top1 y top2 estan a margin 0 → recommended debe ser None
+        assert suggestion["recommended"] is None
+        # Pero los top_candidates siguen presentes con sus scores
+        assert len(suggestion["top_candidates"]) == 3
+
+    def test_below_threshold_recommends_none_but_keeps_candidates(self):
+        from speechlib.domain.recognition import build_suggestions
+
+        # embedding ortogonal a todos → ningun score pasa threshold
+        embeddings = {"SPEAKER_00": _unit(0.0, 0.0, 0.0, 1.0)}
+        library = {
+            "ana": _unit(1.0, 0.0, 0.0, 0.0),
+            "bruno": _unit(0.0, 1.0, 0.0, 0.0),
+        }
+
+        result = build_suggestions(embeddings, library, threshold=0.5, min_margin=0.1)
+
+        suggestion = result["tags"]["SPEAKER_00"]
+        assert suggestion["recommended"] is None
+        assert len(suggestion["top_candidates"]) == 2
+        # Todos los scores estan muy bajos (cerca de 0)
+        for cand in suggestion["top_candidates"]:
+            assert cand["score"] < 0.5
+
+    def test_top_n_caps_candidate_list(self):
+        from speechlib.domain.recognition import build_suggestions
+
+        embeddings = {"SPEAKER_00": _unit(1.0, 0.0, 0.0, 0.0, 0.0)}
+        library = {
+            f"speaker_{i}": _unit(*([1.0 if j == i else 0.1 for j in range(5)]))
+            for i in range(5)
+        }
+
+        result = build_suggestions(embeddings, library, threshold=0.5, min_margin=0.1, top_n=2)
+        top = result["tags"]["SPEAKER_00"]["top_candidates"]
+        assert len(top) == 2
+
+    def test_result_is_json_serializable(self):
+        """El output debe serializarse a JSON directo (sin numpy types)."""
+        import json
+        from speechlib.domain.recognition import build_suggestions
+
+        embeddings = {"SPEAKER_00": _unit(1.0, 0.0)}
+        library = {"ana": _unit(1.0, 0.0), "bruno": _unit(0.0, 1.0)}
+
+        result = build_suggestions(embeddings, library, threshold=0.5, min_margin=0.1)
+        # No debe explotar
+        serialized = json.dumps(result)
+        assert "ana" in serialized
+        assert "top_candidates" in serialized

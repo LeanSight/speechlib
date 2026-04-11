@@ -1,8 +1,12 @@
-"""AT: speaker_map.json cache — save, load, skip embeddings, y formato.
+"""AT: speaker_map_suggestions.json cache — save, load, skip embeddings, formato.
+
+Post behavior change (2026-04-11): el pipeline ya no escribe speaker_map.json
+automaticamente con nombres decididos. Escribe speaker_map_suggestions.json con
+top_candidates + recommended, y la asignacion de nombres reales queda al
+subcomando `confirm`.
 
 Testea _run_speaker_recognition_cached directamente con AudioState real.
 Mock solo en boundaries GPU (_get_inference, load_avg_voice_embeddings).
-Tests de formato JSON migrados a test puro de SpeakerIdentity.label.
 """
 import json
 from pathlib import Path
@@ -38,8 +42,8 @@ def _make_speakers(tags: list[str], duration_s: float = 5.0) -> dict:
 
 class TestSpeakerMapCache:
 
-    def test_speaker_map_saved_after_recognition(self, tmp_path):
-        """_run_speaker_recognition_cached guarda speaker_map.json."""
+    def test_suggestions_saved_after_recognition(self, tmp_path):
+        """_run_speaker_recognition_cached guarda speaker_map_suggestions.json."""
         from speechlib.core_analysis import _run_speaker_recognition_cached
 
         state = _make_state(tmp_path)
@@ -56,25 +60,42 @@ class TestSpeakerMapCache:
                 return_value={"SPEAKER_00": np.ones(192)},
             ),
         ):
-            _run_speaker_recognition_cached(
+            result = _run_speaker_recognition_cached(
                 state, str(voices_dir), speakers, ["SPEAKER_00"]
             )
 
-        speaker_map_path = state.artifacts_dir / "speaker_map.json"
-        assert speaker_map_path.exists()
+        suggestions_path = state.artifacts_dir / "speaker_map_suggestions.json"
+        assert suggestions_path.exists()
+        saved = json.loads(suggestions_path.read_text(encoding="utf-8"))
+        assert "tags" in saved
+        assert "SPEAKER_00" in saved["tags"]
+        assert "top_candidates" in saved["tags"]["SPEAKER_00"]
+        assert "recommended" in saved["tags"]["SPEAKER_00"]
+        # Retorno de la función ES el suggestions dict
+        assert result == saved
 
     def test_cache_hit_skips_embeddings(self, tmp_path):
-        """Si speaker_map.json existe, no se computan embeddings."""
+        """Si speaker_map_suggestions.json existe, no se computan embeddings."""
         from speechlib.core_analysis import _run_speaker_recognition_cached
 
         state = _make_state(tmp_path)
         voices_dir = tmp_path / "voices"
         voices_dir.mkdir()
 
-        # Crear cache con sidecar de params
-        speaker_map_path = state.artifacts_dir / "speaker_map.json"
-        speaker_map_path.write_text(
-            json.dumps({"SPEAKER_00": "speaker"}), encoding="utf-8"
+        # Pre-cache con suggestions válidas + sidecar de params
+        cached_suggestions = {
+            "threshold": 0.55,
+            "min_margin": 0.10,
+            "tags": {
+                "SPEAKER_00": {
+                    "top_candidates": [{"name": "speaker", "score": 0.95}],
+                    "recommended": "speaker",
+                }
+            },
+        }
+        suggestions_path = state.artifacts_dir / "speaker_map_suggestions.json"
+        suggestions_path.write_text(
+            json.dumps(cached_suggestions), encoding="utf-8"
         )
         params_path = state.artifacts_dir / "speaker_map_params.json"
         params_path.write_text(
@@ -92,11 +113,10 @@ class TestSpeakerMapCache:
             )
 
         mock_compute.assert_not_called()
-        assert result == {"SPEAKER_00": "speaker"}
+        assert result == cached_suggestions
 
-    def test_speaker_map_format_no_unknown_literal(self, tmp_path):
-        """speaker_map.json NUNCA contiene el literal 'unknown'.
-        Tags sin match conservan SPEAKER_XX."""
+    def test_suggestions_recommended_is_none_for_unmatched_tags(self, tmp_path):
+        """Tags sin match tienen recommended=None y top_candidates con scores bajos."""
         from speechlib.core_analysis import _run_speaker_recognition_cached
 
         state = _make_state(tmp_path)
@@ -123,9 +143,12 @@ class TestSpeakerMapCache:
                 state, str(voices_dir), speakers, ["SPEAKER_00", "SPEAKER_01"]
             )
 
-        assert "unknown" not in result.values()
-        assert result["SPEAKER_00"] == "SPEAKER_00"
-        assert result["SPEAKER_01"] == "SPEAKER_01"
+        # Ningún tag tiene recommended porque el score es 0 (ortogonal)
+        assert result["tags"]["SPEAKER_00"]["recommended"] is None
+        assert result["tags"]["SPEAKER_01"]["recommended"] is None
+        # "unknown" literal NUNCA aparece en el formato suggestions
+        serialized = json.dumps(result)
+        assert "unknown" not in serialized
 
     def test_enhanced_flag_propagated(self, tmp_path):
         """Cuando state.is_enhanced=True, load_avg_voice_embeddings recibe enhanced=True."""
