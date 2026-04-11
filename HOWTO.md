@@ -15,17 +15,10 @@ iterativamente con un agente guiado por el usuario.
 
 ## 1. Qué es speechlib
 
-Librería + CLI Python. Tres pasos integrados:
-
-1. **Diarización** (`pyannote`): "quién habla cuándo" → tags `SPEAKER_00`,
-   `SPEAKER_01`, ...
-2. **Speaker recognition** (cosine similarity de embeddings
-   `pyannote/embedding`, scores 0-1, más alto = más parecido): matchea
-   cada tag contra una **voice library** opcional para asignar nombres.
-3. **Transcripción** (`faster-whisper`): texto por segmento.
-
-Output: `.vtt` o `.txt` con `[Nombre real] texto...` (o `[SPEAKER_00]`
-sin voice library).
+Librería + CLI Python. Tres pasos: diarización (`pyannote`) → speaker
+recognition (cosine similarity de embeddings contra una voice library
+opcional) → transcripción (`faster-whisper`). Output: `.vtt` o `.txt`
+con `[Nombre real] texto...` (o `[SPEAKER_00]` sin voice library).
 
 ---
 
@@ -33,34 +26,29 @@ sin voice library).
 
 ### Bloqueantes
 
-1. **`HF_TOKEN` de HuggingFace**. Creá cuenta en huggingface.co,
-   generá un token en Settings → Access Tokens, y exportalo:
-   ```bash
-   export HF_TOKEN=hf_xxx    # Linux/Mac/Git Bash
-   setx HF_TOKEN hf_xxx      # Windows (reabrir terminal)
-   ```
-   O pasalo con `--token hf_xxx` en cada llamada.
+1. **`HF_TOKEN` de HuggingFace**. Creá cuenta, generá token en
+   Settings → Access Tokens, y exportalo (`export HF_TOKEN=hf_xxx` en
+   Linux/Mac/Git Bash, `setx HF_TOKEN hf_xxx` en Windows). O pasalo
+   con `--token hf_xxx` (CLI gana sobre env var).
 
 2. **Aceptar licencias de 2 modelos gated** en HuggingFace (click
-   "Agree" logueado):
-   - `pyannote/speaker-diarization-community-1`
-   - `pyannote/embedding`
+   "Agree" logueado): `pyannote/speaker-diarization-community-1` y
+   `pyannote/embedding`.
 
    Sin esto, el pipeline falla con `401 Unauthorized`. Para verificar
-   antes de invertir tiempo en un audio largo, corré `diagnose` sobre
-   un audio corto — si carga los modelos, las licencias están OK.
+   setup antes de invertir tiempo en un audio largo: simplemente
+   **corré `run` sobre un audio corto** (10-30s). El comando carga los
+   modelos antes de procesar, así que el error aparece en los primeros
+   segundos. No hay "dry run" separado.
 
-3. **GPU CUDA + cuDNN**: recomendado (CPU funciona ~10x más lento).
-   Testeado con CUDA 11.x + cuDNN 8; CUDA 12.x funciona si tu PyTorch
-   es compatible. Verificá con
-   `python -c "import torch; print(torch.cuda.is_available())"`.
-   VRAM mínima: **6 GB** para `large-v3-turbo` (default), **4 GB** con
-   `--model medium`, **2 GB** con `--model small`.
+3. **GPU CUDA + cuDNN**: recomendado (CPU ~10x más lento). VRAM mínima:
+   **6 GB** para `large-v3-turbo` (default), **4 GB** con `--model medium`,
+   **2 GB** con `--model small`.
 
 ### Opcional
 
-- **Voice library** (`--voices-folder`): solo si querés nombres reales
-  en el output en vez de `SPEAKER_00/01/...`. Ver sección 5.
+- **Voice library** (`--voices-folder`): para nombres reales en el
+  output en vez de `SPEAKER_00/01/...`. Ver sección 5.
 
 ---
 
@@ -74,38 +62,17 @@ python -m speechlib run "mi_reunion.m4a"
 
 Podés correrlo desde cualquier directorio con path relativo o absoluto.
 
-**Qué hace**:
-- Preprocesa a 16 kHz + loudnorm.
-- Diariza con `pyannote/speaker-diarization-community-1`.
-- Transcribe con `faster-whisper` / `large-v3-turbo`.
-- Guarda el VTT final en `<audio_dir>/<stem>_limpio.vtt` (ej.
-  `Voice 260127.m4a` → `Voice 260127_limpio.vtt`). El sufijo
-  `_limpio` es **automático aunque NO pases `--compress`** — es el
-  naming canónico del output publicado, no implica que haya habido
-  enhancement/compresión (ver §4 y §9).
-- Cachea artefactos intermedios en `<audio_dir>/.<stem>/` (oculto),
-  incluyendo una copia interna `transcript_<lang>.vtt` que es la
-  fuente de la publicación al source folder. Usá `-v` para ver si
-  una etapa reusó cache o recomputó.
+**Qué hace**: preprocesa a 16 kHz + loudnorm, diariza con pyannote,
+transcribe con faster-whisper, y guarda el VTT final en
+`<audio_dir>/<stem>_limpio.vtt` (ej. `audios/reunion.m4a` →
+`audios/reunion_limpio.vtt`). El sufijo `_limpio` es **automático
+aunque NO pases `--compress`** — es el naming canónico del output
+publicado, no implica enhancement/compresión. Cachea artefactos
+intermedios en `<audio_dir>/.<stem>/` (oculto). Imprime una línea por
+etapa indicando cache reuse vs recompute.
 
-**Output sin voice library**:
-```vtt
-WEBVTT
-
-00:00:01.200 --> 00:00:04.500
-[SPEAKER_00] Hola a todos, empezamos la reunión.
-
-00:00:04.500 --> 00:00:08.100
-[SPEAKER_01] Gracias. ¿Podemos revisar el primer punto?
-```
-
-Para que `SPEAKER_00` se reemplace por nombres reales, necesitás una
-voice library (sección 5).
-
-**Tiempos aproximados** (audio de 30-60 min):
-- Primera corrida (con descarga de modelos): ~15-30 min en GPU, ~45-90 min en CPU.
-- Corridas siguientes (modelos cacheados): ~5-15 min en GPU, ~30-60 min en CPU.
-- Con `--compress`: sumá ~10-40 min por el enhancement MossFormer2.
+Sin voice library el VTT trae `[SPEAKER_00]`, `[SPEAKER_01]`, etc. Para
+nombres reales necesitás voice library (sección 5).
 
 ### Flujo recomendado la primera vez (con voice library parcial)
 
@@ -138,10 +105,11 @@ Caso típico: tenés samples de **algunos** asistentes pero no todos.
    asignan por descarte a los `SPEAKER_XX` restantes por cantidad de
    segmentos (ver sección 6).
 
-3. **Revisá el VTT** en `output/transcript_es.vtt`. Si los 4 nombres
-   aparecen correctamente, listo. Si un speaker aparece como
-   `SPEAKER_02` o con nombre incorrecto, pasá al workflow iterativo
-   (sección 7).
+3. **Revisá el VTT** en `<audio_dir>/<stem>_limpio.vtt` (ej.
+   `audios/reunion_limpio.vtt` si el audio era `audios/reunion.m4a`).
+   Si los 4 nombres aparecen correctamente, listo. Si un speaker
+   aparece como `SPEAKER_02` o con nombre incorrecto, pasá al workflow
+   iterativo (sección 7).
 
 ---
 
@@ -149,28 +117,22 @@ Caso típico: tenés samples de **algunos** asistentes pero no todos.
 
 ### `run` — pipeline completo
 
-Corre todo de punta a punta.
-
 ```bash
 python -m speechlib run <audio_file> [opciones]
 ```
 
-**Flags principales** (todos opcionales salvo `<audio_file>`):
+**Flags principales** (corré `--help` para la lista completa):
 
-| Flag | Default | Cuándo usarlo |
+| Flag | Default | Uso |
 |---|---|---|
 | `--voices-folder PATH` | — | Voice library. Activa speaker recognition. |
-| `--speakers "A,B,C"` | — | Asistentes esperados (nombres exactos de subcarpetas en voices/, **case-sensitive**). Filtra la library y fuerza `num_speakers` en pyannote. Ver sección 6. |
-| `--language` | `es` | Código ISO 639-1: `es`, `en`, `fr`, `pt`, etc. |
-| `--model` | `large-v3-turbo` | Default está bien. Alternativas: `medium`, `small`, `tiny` (más rápido, menos VRAM). |
-| `--output-format` | `vtt` | Alternativa: `txt` (sin timestamps). |
-| `--grouping` | `sentences` | `sentences`: agrupa por oración completa (más legible). `timestamps`: un segmento por timestamp crudo de Whisper (más granular). |
-| `--compress` | off | Genera **además** `{stem}_limpio.m4a` (AAC 96kbps mono 16kHz) al lado del audio original, para archivo. No afecta la transcripción. **Nota**: el VTT ya usa el sufijo `_limpio.vtt` sin este flag — `--compress` solo agrega el `.m4a`. |
-| `--skip-enhance` | off | Salta el enhancement (MossFormer2) antes de comprimir. **Sin efecto si no pasás `--compress`** — el enhance nunca toca la transcripción. |
-| `--token hf_xxx` | `$HF_TOKEN` | Solo si no tenés la env var. |
-| `-v` / `--verbose` | off | Logs por etapa. Recomendado la primera vez. |
-
-Flags menos frecuentes: `--log-folder`, `--quantization` (int8 para faster-whisper). Corré `python -m speechlib run --help` para la lista completa.
+| `--speakers "A,B,C"` | — | Asistentes esperados (nombres **case-sensitive** de subcarpetas en voices/). Filtra library y fuerza `num_speakers`. Ver sección 6. |
+| `--language` | `es` | ISO 639-1. |
+| `--model` | `large-v3-turbo` | Alternativas: `medium`, `small`, `tiny` (menos VRAM). |
+| `--output-format` | `vtt` | O `txt`. |
+| `--compress` | off | Genera además `{stem}_limpio.m4a`. El VTT ya usa `_limpio.vtt` sin este flag. |
+| `--token hf_xxx` | `$HF_TOKEN` | Solo si no tenés env var. |
+| `-v` | off | Logs por etapa. Recomendado primera vez. |
 
 ### `recognize` — re-ejecuta solo speaker recognition
 
@@ -178,32 +140,23 @@ Re-computa el mapeo `SPEAKER_XX → nombre` sin re-diarizar ni
 re-transcribir.
 
 ```bash
-python -m speechlib recognize <audio_file> --voices-folder voices/ [--force] [-v]
+python -m speechlib recognize <audio_file> --voices-folder voices/ [--force]
 ```
 
-El `<audio_file>` debe ser el **mismo path** que usaste en `run` —
-speechlib lo usa para encontrar el cache `.<stem>/`.
+Usá el **mismo path** que en `run` (lo necesita para el cache `.<stem>/`).
 
-**Cuándo usarlo**: cambiaste la voice library, `--speakers`, o editaste
-threshold/min_margin.
-
-**`--force`**: el cache se invalida automáticamente cuando cambian los
-params (via el sidecar `speaker_map_params.json`). En teoría `--force`
-es redundante, pero lo usamos como seguro al iterar — elimina duda
-sobre si la invalidación agarró el cambio.
+**Cuándo**: cambiaste la voice library, `--speakers`, o threshold/min_margin.
+`--force` es redundante en teoría (el cache se invalida automáticamente vía
+`speaker_map_params.json`) pero lo usamos como seguro al iterar.
 
 ### `diagnose` — matriz de scores (read-only)
-
-No modifica ningún artefacto. Solo imprime (y guarda) la matriz de
-cosine similarity de cada `SPEAKER_XX` contra cada voice en la library.
 
 ```bash
 python -m speechlib diagnose <audio_file> --voices-folder voices/
 ```
 
-**Cuándo usarlo**: entender por qué un speaker no matchea. `diagnose`
-imprime un resumen en terminal **y** guarda el JSON completo en
-`<audio_dir>/.<stem>/recognition_diagnostics.json`. Estructura:
+No modifica artefactos. Imprime resumen en terminal **y** guarda el JSON
+completo en `<audio_dir>/.<stem>/recognition_diagnostics.json`. Estructura:
 
 ```json
 {
@@ -246,22 +199,26 @@ voices/
 
 **Reglas**:
 
-- **Formato**: WAV (cualquier SR / bit depth). Archivos corruptos se
-  saltan con warning, no rompen el pipeline.
+- **Formato**: WAV (cualquier SR / bit depth).
 - **Nombres case-sensitive**, espacios y acentos preservados.
-  `Carla Lopez/` aparece exactamente así en el output.
-- **Duración por sample**: **5-30 segundos**, audio limpio. Samples <0.5s
-  se ignoran (pyannote no puede generar embedding). Samples de minutos
-  son desperdicio.
+- **Duración por sample**: **5-30 segundos recomendado**. Umbral duro
+  **<0.5s** (se ignoran con warning, pyannote no puede generar embedding).
+  Entre 0.5s y 5s los samples se usan pero pueden dar embeddings
+  inestables — evitalos. Samples de minutos son desperdicio (el embedding
+  no mejora con más duración).
 - **Representatividad crítica** (error silencioso más común): los
   samples deben venir de un contexto acústico **similar al audio a
-  transcribir**. Regla práctica: **si podés escuchar la diferencia de
-  ambiente en 1 segundo, el embedding también la nota**. Mismo
-  dispositivo/plataforma (Zoom↔Zoom) funciona; cruzar muy distintos
-  (teléfono 8 kHz vs lavalier 48 kHz) falla.
-- **Prefijo `_` ignora el subdir**. Excepción: `_enhanced/` — ver Avanzado.
+  transcribir**. Regla práctica: si podés escuchar la diferencia de
+  ambiente en 1 segundo, el embedding también la nota. Cruzar muy
+  distintos (teléfono 8 kHz vs lavalier 48 kHz) falla.
 - **Múltiples samples**: se promedian los embeddings. Más samples
   diversos = embedding más robusto.
+- **Reenrolamiento**: no hay comando de "enrol" separado. Agregá un
+  `.wav` nuevo a `voices/Ana/`, corré `recognize --force`, y el
+  pipeline automáticamente lee los `.wav` de `voices/Ana/`, computa
+  embeddings de cada uno, y calcula el promedio fresco. No hay cache
+  persistente de voice library — cada corrida recarga desde cero.
+- **Prefijo `_` ignora el subdir**. Excepción: `_enhanced/` — ver Avanzado.
 
 ---
 
@@ -275,214 +232,155 @@ python -m speechlib run reunion.m4a \
 
 **Dos efectos**:
 
-1. **Filtra la voice library**: solo estos speakers se consideran en
-   recognition. Elimina falsos positivos contra ausentes.
-2. **Fuerza `num_speakers=N` en pyannote**: la diarización produce
-   **exactamente** N tags. Si hay físicamente más personas hablando,
-   pyannote fusiona al más parecido a otro cluster. Si hay menos,
-   parte el que más habla en dos. **El conteo importa**: si no estás
-   seguro cuántos hablan, mejor omitir `--speakers` y dejar que
-   pyannote infiera.
+1. **Filtra la voice library** a esos speakers (elimina falsos positivos
+   contra ausentes).
+2. **Fuerza `num_speakers=N` en pyannote**: produce exactamente N tags.
+   Si hay físicamente más personas, pyannote fusiona; si hay menos,
+   parte el que más habla. **El conteo importa** — si no estás seguro
+   cuántos hablan, omitilo y dejá que pyannote infiera.
 
 **Asignación por descarte**: si un tag no matchea contra ninguno de los
-speakers con samples, se asigna por orden de **cantidad de segmentos**
-— el tag que más habla recibe el primer nombre sin matchear de
-`--speakers`, etc. Es determinístico. Esto permite pasar nombres aunque
-NO tengas samples de todos: Ana y Bruno matchean vía embeddings, Carla
-y Diego (sin samples) se asignan a los SPEAKER_XX restantes por cantidad
-de segmentos.
+speakers con samples, se asigna por **cantidad de segmentos** — el tag
+que más habla recibe el primer nombre sin matchear de `--speakers`, etc.
+Determinístico. Esto permite pasar nombres aunque NO tengas samples de
+todos.
+
+**Sin warning en conflictos**: si `num_speakers` forzado no coincide con
+lo que pyannote habría inferido, el pipeline no avisa. El síntoma en el
+VTT: un tag agrupando dos voces (fusión) o dos tags para una voz (partición).
 
 ---
 
 ## 7. Workflow iterativo con agente — ajustar speaker recognition
 
-Este es el patrón que usa el usuario cuando recognition falla en algún
-speaker y quiere guiar a un agente (Claude Code) para arreglarlo sin
-repetir el pipeline entero.
+Este es el patrón cuando recognition falla en algún speaker y querés
+arreglarlo sin repetir el pipeline entero.
 
-### Contexto del problema
+**Roles en el loop**: **vos** corrés los comandos del CLI (`diagnose`,
+`recognize --force`). El **"agente"** (Claude Code u otro LLM agente)
+interpreta los scores, propone cambios de threshold, y edita
+`speaker_recognition.py` por vos.
 
-Corriste `run` con voice library y `--speakers`. El VTT tiene algunos
-`SPEAKER_02` en vez de nombres reales, o asignó un nombre incorrecto.
-Ahora querés diagnosticar y ajustar.
+**Punto de entrada concreto**: no hay un comando `speechlib agent` —
+abrís Claude Code en la terminal del proyecto, corrés `diagnose` en
+otra ventana, y le pegás el output al agente (o le pedís "leé
+`<audio_dir>/.<stem>/recognition_diagnostics.json`"). Vos y el agente
+coordinan turnándose, no hay automación del lado del CLI.
+
+**Cuándo empieza**: después de una corrida de `run` donde ves un
+speaker con nombre incorrecto o `SPEAKER_XX` esperando nombre.
+**Cuándo termina**: cuando tu VTT tiene todos los nombres correctos
+o decidís que el fix requiere reenrolar (no params).
 
 > ⚠️ **Trampa antes de iterar**: si cambiás el **conteo** de
 > `--speakers` (ej. 4 → 5), `diarization.rttm` NO se invalida
-> automáticamente. Borralo a mano antes de re-correr. Si solo tocás
-> threshold/min_margin/samples (no el conteo), no hace falta.
+> automáticamente. Borralo a mano. Si solo tocás threshold/min_margin/samples,
+> no hace falta.
 
-### Ciclo de iteración (guided loop)
+### Ciclo de iteración
 
-**Precondición**: ya corriste `run` al menos una vez sobre el audio
-para tener `diarization.rttm` en cache. `diagnose` lo reusa, no
-diariza de cero.
+**Precondición**: ya corriste `run` al menos una vez (para que
+`diarization.rttm` esté en cache; `diagnose` lo reusa).
 
-1. **Inspeccionar**: `python -m speechlib diagnose reunion.m4a
-   --voices-folder voices/` — imprime scores en terminal y guarda JSON
-   en `<audio_dir>/.<stem>/recognition_diagnostics.json` (formato
-   descrito en sección 4).
+1. **Inspeccionar**: `python -m speechlib diagnose reunion.m4a --voices-folder voices/`.
+2. **Usuario guía al agente**: "Ana Pérez aparece como SPEAKER_02, mirá
+   el JSON y decime por qué no matchea."
+3. **Agente lee el JSON, detecta el patrón, reporta y pregunta antes de
+   actuar**: "Ana top1=0.5012 bajo threshold; margin vs Bruno=0.019.
+   ¿Bajar threshold a 0.48 o reenrolar Ana primero?"
+4. **Usuario decide**. Si baja threshold: agente edita
+   `SPEAKER_SIMILARITY_THRESHOLD` en `speechlib/speaker_recognition.py`
+   (no hay flag CLI — ver sección 11). El cambio se activa en la
+   próxima corrida (cada invocación es proceso nuevo que re-importa).
+5. **Re-correr** `recognize --force` y `diagnose` para verificar.
+6. **Iterar** hasta que todos los speakers esperados aparezcan.
 
-2. **Usuario guía al agente con input concreto**:
+**Reglas**: agente muestra data antes de proponer; usuario decide el
+trade-off; usar `recognize --force` (no `run`) para iterar; si el
+problema son los samples (no threshold), reenrolar antes de tocar params.
 
-   > "En esta reunión habla Ana Pérez pero el VTT dice SPEAKER_02. Mirá
-   > `recognition_diagnostics.json` y decime por qué no matchea."
+### Threshold vs min_margin
 
-3. **Agente lee el JSON y detecta el patrón**. Ejemplo: Ana top1 con
-   0.5012 (bajo threshold 0.55), margin vs Bruno 0.019 (muy chico).
-   **Dos problemas combinados**.
+Reglas que el código aplica para aceptar un match:
 
-4. **Agente reporta y pregunta antes de actuar**:
+1. `top1_score >= threshold` (default `0.55`)
+2. `top1_score - top2_score >= min_margin` (default `0.10`)
 
-   > "Ana top1 con 0.5012 pero bajo threshold; margin vs Bruno 0.019.
-   > Threshold=0.48 puede capturarla pero el margin bajo sugiere samples
-   > poco distintivos. ¿Probar 0.48 o preferís reenrolar Ana primero?"
+Ambas deben cumplirse.
 
-5. **Usuario decide**. Si dice "probá 0.48":
-   - Agente edita `SPEAKER_SIMILARITY_THRESHOLD = 0.48` en
-     `speechlib/speaker_recognition.py` (hoy no hay flag CLI, ver
-     sección 11).
-   - El cambio se activa automáticamente en la próxima corrida del CLI
-     — cada invocación arranca un proceso Python nuevo que re-importa
-     el módulo. Excepción: dentro de notebook/REPL persistente hay que
-     recargar con `importlib.reload(speechlib.speaker_recognition)`.
-   - Corre `recognize --force` para recomputar:
-     ```bash
-     python -m speechlib recognize reunion.m4a --voices-folder voices/ --force
-     ```
-     (`--force` es opcional — el cache se invalida automáticamente vía
-     el sidecar `speaker_map_params.json` — pero lo usamos como seguro
-     al iterar.)
-   - Re-corre `diagnose` y verificá que Ana ahora matchee.
+**Regla conservadora para bajar threshold**: elegí `T = max(top1 - 0.02, 0.40)`.
+Deja 2pp de buffer sobre el top1 medido y nunca baja de 0.40 (por debajo
+los embeddings son demasiado ruidosos). Antes de committear, **chequeá
+el resto de la matriz** con `diagnose` para confirmar que ningún otro
+`SPEAKER_XX` cruce contra un nombre equivocado al nuevo `T`.
 
-6. **Iterar hasta que todos los speakers esperados aparecen**. Si el
-   threshold bajo causa falsos positivos en otros, el usuario le dice
-   al agente: "ahora Carla aparece en turnos de Diego, revertí
-   threshold y reenrolá Carla con samples mejores".
+**`min_margin`**: bajalo solo en casos raros donde dos voces son
+genuinamente casi idénticas. Un margin chico normalmente significa
+embeddings mal definidos.
 
-### Reglas del loop
+### Cuándo el problema NO es el threshold (fix upstream)
 
-- **Agente muestra la data antes de proponer cambios**. Nunca ajusta
-  a ciegas.
-- **Usuario decide el trade-off** (bajar threshold captura más pero
-  introduce falsos positivos).
-- **Agente usa `recognize --force`, no `run`**, para ahorrar minutos.
-- **`diagnose` es read-only**: inspeccionar libremente.
-- **Si el problema son los samples, no el threshold**, el agente
-  debe avisar antes de ajustar params (parchar con threshold cuando
-  el sample está mal es frágil).
-
-### Threshold vs min_margin — cuándo tocar cada uno
-
-- **`threshold` (0.55)**: score mínimo absoluto. **Bajalo** si el top1
-  del speaker está claramente por encima del resto pero abajo de 0.55
-  (ej. 0.48 vs 0.30 y 0.25). **No** si hay competencia cercana.
-- **`min_margin` (0.10)**: diferencia top1-top2 mínima. **Bajalo solo**
-  en casos raros donde dos voces son genuinamente casi idénticas. Un
-  margin chico normalmente significa embeddings mal definidos — aceptar
-  esos matches mete ruido.
-
-### Cuándo el problema NO es el threshold (no lo toques, fix upstream)
-
-- **Todos los scores del speaker faltante <0.40**: samples desalineados
-  con el contexto acústico del audio. Reenrolar.
-- **Top1 inestable entre corridas**: embeddings no determinísticos por
-  samples muy cortos o ruidosos. Reenrolar con samples limpios >5s.
-- **Score alto contra speaker equivocado** (Ana 0.70 contra Bruno, 0.30
-  contra sí misma): los samples de Ana probablemente tienen la voz de
-  Bruno contaminada. Revisá y limpiá los samples.
-- **Un speaker esperado no aparece en ningún turno del VTT**: pyannote
-  no creó cluster para él — problema anterior a recognition. Probar
-  sin `--speakers` para ver cuántos clusters detecta libremente.
+- **Todos los scores <0.40**: samples desalineados del contexto acústico. Reenrolar.
+- **Top1 inestable entre corridas**: samples muy cortos/ruidosos. Reenrolar >5s.
+- **Score alto contra speaker equivocado**: samples contaminados con otra voz. Limpiar.
+- **Speaker esperado no aparece en ningún turno**: pyannote no creó cluster.
+  Probar sin `--speakers` para ver clusters detectados libremente.
 
 ---
 
 ## 8. Cache y artefactos
 
-Cada corrida crea una carpeta `<audio_dir>/.<stem>/` con artefactos
-reutilizables. Los que importan:
+Cada corrida crea `<audio_dir>/.<stem>/` con artefactos reutilizables:
+`diarization.rttm` (output crudo de pyannote), `speaker_map.json` +
+`speaker_map_params.json` (mapeo + sidecar de params), y
+`recognition_diagnostics.json` (matriz de scores). Cambiar `--speakers`,
+threshold o min_margin invalida `speaker_map.json` automáticamente vía
+el sidecar.
 
-- **`diarization.rttm`** — output crudo de pyannote (quién habla cuándo).
-- **`speaker_map.json`** + **`speaker_map_params.json`** — mapeo
-  `SPEAKER_XX → nombre` y sidecar con los params usados.
-- **`recognition_diagnostics.json`** — matriz de scores (si hay
-  `--voices-folder`).
-
-**Cache invalidation automática**: cambiar `--speakers`, threshold o
-min_margin invalida `speaker_map.json` automáticamente vía el sidecar.
-Todo el resto se reusa.
-
-⚠️ **Excepción crítica — `diarization.rttm` no se invalida automáticamente**:
-si cambiás el **conteo** de `--speakers` (ej. de 4 a 5 nombres),
-pyannote necesita re-diarizar con `num_speakers` nuevo, pero el RTTM
-viejo se reutiliza silenciosamente. **Borralo manualmente** antes de
-re-correr:
+⚠️ **Excepción crítica — `diarization.rttm` no se invalida automáticamente**
+si cambiás el **conteo** de `--speakers` (ej. 4 → 5 nombres). El RTTM
+viejo se reutiliza silenciosamente (en `run` y `recognize`). **Borralo
+manualmente**:
 
 ```bash
 rm audios/.reunion/diarization.rttm    # Linux/Mac/Git Bash
 del audios\.reunion\diarization.rttm   # Windows cmd
 ```
 
-Si cambiás threshold/min_margin/samples pero **no el conteo** de
-speakers, no hace falta borrarlo.
-
-**Espacio en disco**: ~100-300 MB por hora de audio (dominado por el
-wav 16 kHz resampled).
+Si solo tocás threshold/min_margin/samples, no hace falta borrarlo.
 
 ---
 
-## 9. Gotchas comunes la primera corrida
+## 9. Gotchas comunes
 
-- **El VTT sale como `<stem>_limpio.vtt` aunque NO pases `--compress`**:
-  el sufijo `_limpio` es el naming canónico del output publicado, no
-  implica que el audio fue enhanced/comprimido. `--compress` solo
-  controla si **además** se genera el `.m4a` comprimido. Si esperabas
-  `output/transcript_es.vtt`, ese path no existe — buscá el `.vtt` al
-  lado del audio.
-- **`--compress` no es gratis**: agrega tiempo sustancial (el enhance
-  MossFormer2 corre antes de comprimir). Solo usalo si querés el
-  `_limpio.m4a` de archivo.
-- **`--model` default está bien**: `large-v3-turbo` es el sweet spot.
-  Cambialo solo si te quedás sin VRAM.
+- **El VTT sale como `<stem>_limpio.vtt` aunque NO pases `--compress`**.
+  Buscalo al lado del audio, no en `output/`.
 - **`--speakers` con nombres inexistentes es silencioso**: si pasás un
-  nombre que no tiene subcarpeta en `voices/`, el CLI **no falla** —
-  asume speaker sin samples y lo pone en la cola de asignación por
-  descarte. Verificá los nombres antes de correr.
-- **Samples en contexto acústico muy distinto al audio**: error silencioso
-  más común. Ver sección 5.
+  nombre que no tiene subcarpeta en `voices/`, el CLI no falla — lo
+  pone en cola de asignación por descarte. Verificá nombres con
+  `ls voices/` antes de correr, o mirá `recognition_diagnostics.json`
+  después (los speakers con embeddings aparecen como keys).
+- **`recognize` sin haber corrido `run` antes** falla — necesita
+  `diarization.rttm` cacheado. Corré `run` al menos una vez primero.
+- **Samples en contexto acústico muy distinto al audio**: error
+  silencioso más común. Ver sección 5.
 
 ---
 
 ## 10. Troubleshooting
 
-### Errores de setup
-
 | Síntoma | Fix |
 |---|---|
-| Error con "token" / `HF_TOKEN not set` | `export HF_TOKEN=hf_...` o `--token hf_...` |
-| `401 Unauthorized` bajando pyannote | Aceptar licencias en huggingface.co (ver sección 2) |
-| `WinError 1314` (Windows) | Correr como Administrador la primera vez (ver Avanzado) |
-
-### Problemas de calidad
-
-| Síntoma | Fix |
-|---|---|
-| Output con `SPEAKER_XX` esperando nombres | Corré `diagnose` → workflow sección 7 |
+| `HF_TOKEN not set` | `export HF_TOKEN=hf_...` o `--token hf_...` |
+| `401 Unauthorized` bajando pyannote | Aceptar licencias (sección 2) |
+| `WinError 1314` (Windows) | Correr como Administrador la primera vez (Avanzado) |
+| Output con `SPEAKER_XX` esperando nombres | `diagnose` → workflow sección 7 |
 | Transcripción con alucinaciones | Verificar `--language`; si es muy ruidoso, `--model medium` |
-| Primera corrida tarda mucho | Descarga de modelos; las siguientes son rápidas |
 | Speaker nunca matchea (score <0.40) | Reenrolar con samples del mismo contexto acústico |
 | Diarización parte un turno en dos | Pasar `--speakers` con conteo exacto |
 
-### Re-correr parcialmente
-
-```bash
-# Solo recognition (sin re-diarizar):
-python -m speechlib recognize reunion.m4a --voices-folder voices/ --force
-
-# Empezar de cero (borra cache):
-rm -rf audios/.reunion/                       # Linux/Mac/Git Bash
-rmdir /s /q audios\.reunion                   # Windows cmd
-python -m speechlib run reunion.m4a --voices-folder voices/
-```
+Para empezar de cero borrá la cache: `rm -rf audios/.reunion/` (o
+`rmdir /s /q audios\.reunion` en Windows cmd).
 
 ---
 
@@ -490,67 +388,52 @@ python -m speechlib run reunion.m4a --voices-folder voices/
 
 Hardcoded en `speechlib/speaker_recognition.py`:
 
-- `SPEAKER_SIMILARITY_THRESHOLD = 0.55` — score mínimo para aceptar match.
+- `SPEAKER_SIMILARITY_THRESHOLD = 0.55` — score mínimo para match.
 - `SPEAKER_SIMILARITY_MIN_MARGIN = 0.10` — diferencia top1-top2 mínima.
 - `MIN_SEGMENT_DURATION_S = 0.5` — turnos más cortos se ignoran **solo
-  para recognition** (el segmento sigue en el VTT con su tag
-  `SPEAKER_XX` crudo).
+  para recognition** (el segmento sigue en el VTT con tag crudo).
 
 Los dos primeros no tienen flag CLI — editar el archivo es la única
-forma de cambiarlos. Cambio global (afecta todas las corridas). Deuda
-técnica conocida.
+forma. Deuda técnica conocida.
 
----
+**Dónde encontrar el archivo**:
+- **Dev install** (`pip install -e .` desde un clone): en el repo
+  clonado, ej. `~/speechlib/speechlib/speaker_recognition.py`.
+- **Install normal** (`pip install speechlib`): en
+  `site-packages/speechlib/speaker_recognition.py`. Para encontrarlo:
+  `python -c "import speechlib; print(speechlib.__file__)"` y mirá
+  el directorio al lado.
 
-## 12. Para profundizar
-
-- `README.md`: API legacy de la clase `Transcriptor` (no cubierta acá).
-- `speechlib/speaker_recognition.py`: defaults editables
-  (`SPEAKER_SIMILARITY_THRESHOLD`, `SPEAKER_SIMILARITY_MIN_MARGIN`).
-- `speechlib/__main__.py`: definición del CLI con Typer.
-- `devdocs/lessons_learned_2026_04_10.md`: hallazgos técnicos validados,
-  experimentos A/B, deuda técnica pendiente.
+**Reversible** con `git checkout` (dev install) o
+`pip install --force-reinstall speechlib` (install normal). Cambio
+global al environment Python — afecta todas las corridas.
 
 ---
 
 ## Avanzado
 
-Secciones para casos menos frecuentes. La mayoría de usuarios no las
-necesita al arrancar.
-
 ### Subdirectorio `_enhanced/` en la voice library
 
-Dentro de cada carpeta de speaker podés tener un subdirectorio opcional
-`_enhanced/`. Si existe y tiene samples, se usa **en lugar de** los
-samples de la raíz del speaker (no se mezclan). Si existe pero está
-vacío, fallback a la raíz. **Esos samples los creás vos** — speechlib
-no los genera. Sirve para tener una versión "limpia" del enrolment
-(post-procesada con tu herramienta favorita de denoise) conviviendo
-con la original, sin tener que elegir entre las dos.
+Dentro de cada carpeta de speaker, un subdirectorio opcional `_enhanced/`.
+Si existe y tiene samples, se usa **en lugar de** los samples de la raíz
+(no se mezclan). Si está vacío, fallback a la raíz. Los creás vos
+(speechlib no los genera) — sirve para tener una versión denoised
+conviviendo con la original.
 
 ### Gotchas de Windows
 
-- **Administrador solo para la primera descarga**: cuando HuggingFace
-  baja los modelos por primera vez, crea symlinks en
-  `%USERPROFILE%\.cache\huggingface\`. Si aparece `WinError 1314`
-  (privilegio denegado), cerrá la terminal, abrí una nueva como
-  Administrador, y corré. Después de esa primera corrida exitosa, los
-  modelos quedan en disco y las siguientes corridas NO requieren
-  Administrador (ni siquiera después de reiniciar la máquina).
-- **`torchcodec` falla en Windows CPU-only** (`libtorchcodec_core*.dll
-  WinError 127`). Ya mitigado automáticamente vía `compat.py` con shim
-  PyAV + `wave` stdlib — no hay que hacer nada.
-- **`torchaudio 2.10+`**: `list_audio_backends` removido pero
-  SpeechBrain 1.0.3 lo usa. Ya mitigado con shim en `compat.py`.
-- **Paths con espacios**: comillas dobles en cmd/PowerShell:
-  `python -m speechlib run "C:/audios/Reunión de equipo.m4a"`. Comillas
-  simples funcionan en Git Bash pero no en cmd — usá siempre dobles.
+- **Administrador solo para la primera descarga**: HuggingFace crea
+  symlinks en `%USERPROFILE%\.cache\huggingface\`. Si aparece
+  `WinError 1314`, abrí terminal como Administrador y corré. Después de
+  la primera corrida exitosa, las siguientes NO requieren Administrador.
+- **`torchcodec` y `torchaudio 2.10+`**: ya mitigados vía `compat.py`,
+  no hay que hacer nada.
+- **Paths con espacios**: usá comillas dobles siempre
+  (`"C:/audios/Reunión.m4a"`).
 
 ### Formatos de audio
 
-El CLI usa ffmpeg internamente, así que cualquier formato que ffmpeg
-entiende funciona (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.opus`, `.webm`,
-`.mp4`, etc.). **ffmpeg no viene con speechlib** — tiene que estar
-instalado y en el PATH. Linux/Mac: `apt install ffmpeg` o
-`brew install ffmpeg`. Windows: `choco install ffmpeg` o
-`winget install ffmpeg`.
+El CLI usa ffmpeg internamente — cualquier formato que ffmpeg entiende
+funciona (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.opus`, etc.). **ffmpeg no
+viene con speechlib**, tiene que estar en el PATH (`apt install ffmpeg`,
+`brew install ffmpeg`, `winget install ffmpeg`).
