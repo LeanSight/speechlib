@@ -56,3 +56,38 @@ def test_output_within_true_peak(tmp_path):
     waveform, _ = torchaudio.load(str(result.working_path))
     true_peak_linear = 10 ** (-1.0 / 20)
     assert waveform.abs().max().item() <= true_peak_linear + 1e-4
+
+
+def test_quiet_audio_with_transient_peak_is_not_clipped(tmp_path):
+    """LUFS baja + pico transitorio alto: el gain aplicado es uniforme
+    (cap gain), no hay hard-clipping que aplaste el transitorio."""
+    import math
+    import torch
+
+    sr = 16000
+    t = torch.arange(sr * 2) / sr
+    quiet_amp = 0.02
+    transient_amp = 0.85
+    signal = quiet_amp * torch.sin(2 * math.pi * 1000 * t)
+    signal[100:150] = transient_amp
+    wav_path = tmp_path / "audio.wav"
+    torchaudio.save(str(wav_path), signal.unsqueeze(0), sr, bits_per_sample=16)
+
+    result = loudnorm(_state(wav_path))
+    waveform, _ = torchaudio.load(str(result.working_path))
+
+    true_peak = 10 ** (-1.0 / 20)
+    assert waveform.abs().max().item() <= true_peak + 1e-4
+
+    # Gain efectivo: peak del output dividido por peak del input, en dos
+    # zonas (transitorio y quieta). Deben coincidir: gain uniforme = sin
+    # clipping. Hard-clip hace el transitorio artificialmente bajo → los
+    # gains divergen.
+    transient_out = waveform[0, 100:150].abs().max().item()
+    quiet_out = waveform[0, sr:].abs().max().item()
+    gain_transient = transient_out / transient_amp
+    gain_quiet = quiet_out / quiet_amp
+    assert abs(gain_transient - gain_quiet) < 0.01, (
+        f"gain no uniforme: transient={gain_transient:.4f} "
+        f"vs quiet={gain_quiet:.4f} (hard-clipping)"
+    )

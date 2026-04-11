@@ -1,4 +1,3 @@
-import torch
 import torchaudio
 from .audio_state import AudioState
 from .step_timer import timed
@@ -22,10 +21,17 @@ def loudnorm(state: AudioState) -> AudioState:
 
     gain_db = TARGET_LUFS - current_lufs
     gain_linear = 10 ** (gain_db / 20)
-    normalized = waveform * gain_linear
 
+    # Cap gain al headroom del sample peak: hard-clipping distorsiona voz,
+    # perder algo de loudness no.
     true_peak = 10 ** (TRUE_PEAK_DB / 20)
-    normalized = torch.clamp(normalized, -true_peak, true_peak)
+    sample_peak = waveform.abs().max().item()
+    if sample_peak > 0:
+        max_safe_gain = true_peak / sample_peak
+        if gain_linear > max_safe_gain:
+            gain_linear = max_safe_gain
+
+    normalized = waveform * gain_linear
 
     torchaudio.save(str(state.working_path), normalized, sr, bits_per_sample=16)
     return state.model_copy(update={"is_normalized": True})
