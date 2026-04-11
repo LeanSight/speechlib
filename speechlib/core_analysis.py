@@ -559,6 +559,12 @@ def core_analysis(
     with console.status("Preprocessing..."):
         state_loudnorm = _preprocess_audio(file_name)
 
+    # Compress en paralelo con diarize cuando no hay enhance (GPU vs CPU,
+    # sin contención). Enhance necesita GPU -> se serializa más abajo.
+    compress_thread = None
+    if compress and skip_enhance:
+        compress_thread = _start_compress_thread(state_loudnorm)
+
     num_speakers = len(allowed_speakers) if allowed_speakers else None
 
     with console.status("Diarization..."):
@@ -612,15 +618,15 @@ def core_analysis(
         with measure("publish_artifacts"):
             _publish_domain_artifacts(common_segments, annotation, speaker_map, state_loudnorm, language)
 
-        # Enhance + compress para output de escucha humana (_limpio.m4a)
+        # Enhance + compress serial (ambos GPU, no paraleliza con diarize).
+        # El path skip_enhance ya arrancó como thread después del preprocess.
         if compress and not skip_enhance:
             with console.status("Enhance + compress..."):
                 state_enhanced = enhance_audio(state_loudnorm)
                 compress_audio(state_enhanced.working_path,
                     state_loudnorm.source_path.parent / f"{state_loudnorm.source_path.stem.strip()}_limpio.m4a")
-        elif compress:
-            compress_audio(state_loudnorm.working_path,
-                state_loudnorm.source_path.parent / f"{state_loudnorm.source_path.stem.strip()}_limpio.m4a")
+        elif compress_thread is not None:
+            compress_thread.join()
 
         _publish_to_source_folder(state_loudnorm, language, output_format)
 
