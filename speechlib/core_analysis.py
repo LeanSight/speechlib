@@ -409,6 +409,15 @@ def _run_diarization_cached(state: AudioState, access_token: str | None, *, num_
     return annotation, False
 
 
+def _resolve_working_path_from_cache(state: AudioState) -> AudioState:
+    """Apunta working_path al audio procesado del cache (enhanced/16k)."""
+    for candidate in ("enhanced.wav", "16k.wav"):
+        p = state.artifacts_dir / candidate
+        if p.exists():
+            return state.model_copy(update={"working_path": p, "is_wav": True})
+    return state
+
+
 def run_recognition(
     file_name: str,
     voices_folder: str,
@@ -426,12 +435,7 @@ def run_recognition(
         raise FileNotFoundError(f"No diarization.rttm in {state.artifacts_dir}. Run full pipeline first.")
     annotation = next(iter(_load_rttm(str(rttm_path)).values()))
 
-    # Resolver working_path al audio procesado (16k o enhanced)
-    for candidate in ("enhanced.wav", "16k.wav"):
-        p = state.artifacts_dir / candidate
-        if p.exists():
-            state = state.model_copy(update={"working_path": p, "is_wav": True})
-            break
+    state = _resolve_working_path_from_cache(state)
 
     if force:
         (state.artifacts_dir / "speaker_map.json").unlink(missing_ok=True)
@@ -460,11 +464,7 @@ def run_diagnose(
         raise FileNotFoundError(f"No diarization.rttm in {state.artifacts_dir}. Run full pipeline first.")
     annotation = next(iter(_load_rttm(str(rttm_path)).values()))
 
-    for candidate in ("enhanced.wav", "16k.wav"):
-        p = state.artifacts_dir / candidate
-        if p.exists():
-            state = state.model_copy(update={"working_path": p, "is_wav": True})
-            break
+    state = _resolve_working_path_from_cache(state)
 
     _, speakers, speaker_tags, _ = _build_speaker_groups(annotation)
 
