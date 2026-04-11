@@ -84,3 +84,14 @@ profiling_traces/
 tests/checkpoints/
 testiq_coverage.json
 .import_linter_cache/
+# Claude Code local settings (per-user)
+.claude/settings.local.json
+
+# Trash / leaked test artifacts
+MagicMock/
+temp/
+
+# speechlib runtime outputs in examples/
+examples/.*/
+examples/*_limpio.vtt
+examples/*_limpio.txt
