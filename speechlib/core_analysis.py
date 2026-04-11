@@ -193,9 +193,8 @@ def _compute_averaged_embeddings_per_tag(
     import numpy as np
 
     inference = _get_inference()
-    folder_name = str(Path(state.working_path).parent / "tmp")
-    if not os.path.exists(folder_name):
-        os.makedirs(folder_name)
+    tmp_dir = Path(state.working_path).parent / "tmp"
+    tmp_dir.mkdir(exist_ok=True)
 
     embeddings_by_tag: dict = {}
     with measure("speaker_embeddings", gpu=True):
@@ -209,10 +208,8 @@ def _compute_averaged_embeddings_per_tag(
             for i, segment in enumerate(selected):
                 start_ms = segment[0] * 1000
                 end_ms = segment[1] * 1000
-                chunk = (
-                    folder_name + "/"
-                    + os.path.splitext(os.path.basename(str(state.working_path)))[0]
-                    + f"_{spk_tag}_chunk_{i}.wav"
+                chunk = str(
+                    tmp_dir / f"{Path(state.working_path).stem}_{spk_tag}_chunk_{i}.wav"
                 )
                 try:
                     slice_and_save(str(state.working_path), start_ms, end_ms, chunk)
@@ -220,10 +217,7 @@ def _compute_averaged_embeddings_per_tag(
                 except Exception as exc:
                     logger.debug("Error extracting embedding from segment: %s", exc)
                 finally:
-                    try:
-                        os.remove(chunk)
-                    except OSError:
-                        pass
+                    Path(chunk).unlink(missing_ok=True)
             averaged = average_embeddings(per_chunk_embeddings)
             if averaged is not None:
                 embeddings_by_tag[spk_tag] = averaged
