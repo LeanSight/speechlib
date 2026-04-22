@@ -47,16 +47,21 @@ def transcribe_full_aligned(file_name, segments, language, model_size, quantizat
         file_name, language=language, beam_size=1, batch_size=TRANSCRIPTION_BATCH_SIZE,
         word_timestamps=True,
     )
-    whisper_segs = list(whisper_segments)
+    return _assign_text_to_segments(list(whisper_segments), segments)
 
+
+def _assign_text_to_segments(whisper_segs, segments):
+    """Asigna el texto de cada whisper_seg al segmento de diarización correspondiente.
+
+    Word-level: cada palabra va al segmento cuya ventana contiene su midpoint
+    (fallback: segmento con mayor overlap). Segment-level (sin word timestamps):
+    cada whisper_seg al segmento con mayor overlap.
+    """
     seg_texts = [[] for _ in segments]
 
     for ws in whisper_segs:
         words = getattr(ws, "words", None) or []
         if words:
-            # Word-level assignment: each word goes to the diarization segment
-            # whose window contains the word midpoint.  Fallback to segment
-            # with maximum overlap when no segment contains the midpoint.
             for word in words:
                 mid = (word.start + word.end) / 2
                 best_idx = -1
@@ -72,7 +77,6 @@ def transcribe_full_aligned(file_name, segments, language, model_size, quantizat
                 if best_idx >= 0:
                     seg_texts[best_idx].append(word.word.strip())
         else:
-            # Fallback: segment-level exclusive assignment (no word timestamps)
             best_idx = -1
             best_overlap = 0.0
             for i, seg in enumerate(segments):
