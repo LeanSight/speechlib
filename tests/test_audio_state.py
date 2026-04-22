@@ -57,3 +57,35 @@ def test_artifacts_dir_normal_filename():
         working_path=Path("/rec/meeting.m4a"),
     )
     assert state.artifacts_dir == Path("/rec/.meeting")
+
+
+def test_artifacts_dir_cae_al_cache_sin_limpio_si_direct_no_existe(tmp_path):
+    """Stem termina en `_limpio` y `.<stem>/` no existe pero `.<stem_sin_limpio>/` si:
+    artifacts_dir resuelve al cache sin sufijo (caso: original borrado post-pipeline)."""
+    (tmp_path / ".reunion").mkdir()
+    state = AudioState(
+        source_path=tmp_path / "reunion_limpio.m4a",
+        working_path=tmp_path / "reunion_limpio.m4a",
+    )
+    assert state.artifacts_dir == tmp_path / ".reunion"
+
+
+def test_artifacts_dir_usa_direct_si_existe_aunque_haya_fallback(tmp_path):
+    """Si ambos caches existen, gana el directo (fresh run sobre `_limpio.m4a` standalone
+    es legitimo y no debe ser hijacked por un cache sin sufijo preexistente)."""
+    (tmp_path / ".reunion_limpio").mkdir()
+    (tmp_path / ".reunion").mkdir()
+    state = AudioState(
+        source_path=tmp_path / "reunion_limpio.m4a",
+        working_path=tmp_path / "reunion_limpio.m4a",
+    )
+    assert state.artifacts_dir == tmp_path / ".reunion_limpio"
+
+
+def test_artifacts_dir_sin_limpio_no_aplica_fallback(tmp_path):
+    """Stem sin sufijo `_limpio`: comportamiento legacy (default al `.<stem>/`)."""
+    state = AudioState(
+        source_path=tmp_path / "meeting.m4a",
+        working_path=tmp_path / "meeting.m4a",
+    )
+    assert state.artifacts_dir == tmp_path / ".meeting"
