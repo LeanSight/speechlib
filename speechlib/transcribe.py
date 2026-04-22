@@ -15,6 +15,15 @@ def _get_faster_whisper_model(model_size: str, device: str, compute_type: str) -
     return WhisperModel(model_size, device=device, compute_type=compute_type)
 
 
+def _load_faster_whisper_model(model_size: str, quantization: bool) -> "WhisperModel":
+    """Selecciona device + compute_type según CUDA disponibilidad y retorna el modelo."""
+    if torch.cuda.is_available():
+        compute_type = "int8_float16" if quantization else "float16"
+        return _get_faster_whisper_model(model_size, "cuda", compute_type)
+    compute_type = "int8" if quantization else "float32"
+    return _get_faster_whisper_model(model_size, "cpu", compute_type)
+
+
 def transcribe_full_aligned(file_name, segments, language, model_size, quantization):
     """Transcribe el audio completo de una vez y mapea texto por overlap de timestamp.
 
@@ -32,13 +41,7 @@ def transcribe_full_aligned(file_name, segments, language, model_size, quantizat
     Returns:
         lista de [start, end, text, speaker]
     """
-    if torch.cuda.is_available():
-        compute_type = "int8_float16" if quantization else "float16"
-        model = _get_faster_whisper_model(model_size, "cuda", compute_type)
-    else:
-        compute_type = "int8" if quantization else "float32"
-        model = _get_faster_whisper_model(model_size, "cpu", compute_type)
-
+    model = _load_faster_whisper_model(model_size, quantization)
     batched = BatchedInferencePipeline(model=model)
     whisper_segments, _ = batched.transcribe(
         file_name, language=language, beam_size=1, batch_size=TRANSCRIPTION_BATCH_SIZE,
@@ -95,12 +98,7 @@ def transcribe(file, language, model_size, model_type, quantization, custom_mode
         return res
     elif model_size in ["base", "tiny", "small", "medium", "large", "large-v1", "large-v2", "large-v3"]:
         if model_type == "faster-whisper":
-            if torch.cuda.is_available():
-                compute_type = "int8_float16" if quantization else "float16"
-                model = _get_faster_whisper_model(model_size, "cuda", compute_type)
-            else:
-                compute_type = "int8" if quantization else "float32"
-                model = _get_faster_whisper_model(model_size, "cpu", compute_type)
+            model = _load_faster_whisper_model(model_size, quantization)
 
             if language in model.supported_languages:
                 batched = BatchedInferencePipeline(model=model)
