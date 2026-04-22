@@ -24,7 +24,10 @@ def _load_faster_whisper_model(model_size: str, quantization: bool) -> "WhisperM
     return _get_faster_whisper_model(model_size, "cpu", compute_type)
 
 
-def transcribe_full_aligned(file_name, segments, language, model_size, quantization):
+def transcribe_full_aligned(
+    file_name, segments, language, model_size, quantization,
+    *, initial_prompt: str | None = None,
+):
     """Transcribe el audio completo de una vez y mapea texto por overlap de timestamp.
 
     En lugar de llamar a transcribe() N veces (una por segmento), esta funcion:
@@ -37,6 +40,8 @@ def transcribe_full_aligned(file_name, segments, language, model_size, quantizat
         language: codigo de idioma
         model_size: tamano del modelo whisper
         quantization: si usar cuantizacion
+        initial_prompt: texto opcional que sesga la decodificación de Whisper
+            hacia términos de dominio (nombres, jerga, siglas). None = sin sesgo.
 
     Returns:
         lista de [start, end, text, speaker]
@@ -45,7 +50,7 @@ def transcribe_full_aligned(file_name, segments, language, model_size, quantizat
     batched = BatchedInferencePipeline(model=model)
     whisper_segments, _ = batched.transcribe(
         file_name, language=language, beam_size=1, batch_size=TRANSCRIPTION_BATCH_SIZE,
-        word_timestamps=True,
+        word_timestamps=True, initial_prompt=initial_prompt,
     )
     return _assign_text_to_segments(list(whisper_segments), segments)
 

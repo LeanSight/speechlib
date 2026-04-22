@@ -97,6 +97,9 @@ def run(
     quantization: Annotated[bool, typer.Option(help="Use int8 quantization")] = False,
     grouping: Annotated[Grouping, typer.Option(help="Grouping mode")] = Grouping.sentences,
     speakers: _speakers_opt = None,
+    initial_prompt: Annotated[Optional[str], typer.Option(
+        help="Context text biasing Whisper decoding (domain terms, names, jargon)",
+    )] = None,
     verbose: _verbose_opt = False,
 ):
     """Full pipeline: preprocess, diarize, recognize, transcribe, publish."""
@@ -117,6 +120,7 @@ def run(
         compress=compress,
         grouping_mode=grouping.value,
         allowed_speakers=_parse_speakers(speakers),
+        initial_prompt=initial_prompt,
     )
 
 

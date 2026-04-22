@@ -136,6 +136,7 @@ def _transcribe_segments(
     custom_model_path,
     hf_model_id,
     aai_api_key,
+    initial_prompt: str | None = None,
 ) -> list:
     """Transcribe segmentos del audio. Soporta faster-whisper (alineado) y
     el path generico (segmentacion por speaker).
@@ -144,7 +145,8 @@ def _transcribe_segments(
     with measure("transcription", gpu=True):
         if model_type == "faster-whisper":
             return transcribe_full_aligned(
-                str(state.working_path), common, language, model_size, quantization
+                str(state.working_path), common, language, model_size, quantization,
+                initial_prompt=initial_prompt,
             )
 
         # Path generico: regenerar speakers desde common (post absorb/merge)
@@ -542,6 +544,7 @@ def core_analysis(
     compress: bool = False,
     grouping_mode: str = "sentences",
     allowed_speakers: list[str] | None = None,
+    initial_prompt: str | None = None,
 ):
     import torch
     from rich.console import Console
@@ -609,6 +612,7 @@ def core_analysis(
             custom_model_path=custom_model_path,
             hf_model_id=hf_model_id,
             aai_api_key=aai_api_key,
+            initial_prompt=initial_prompt,
         )
     console.print("[green]OK[/] Transcription done")
 
