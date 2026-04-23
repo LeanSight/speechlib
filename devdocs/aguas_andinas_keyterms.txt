@@ -1,0 +1,69 @@
+# Keyterms para transcripción AssemblyAI — Reunión Leansight / Aguas Andinas
+# Una línea por término. Comentarios con #.
+
+# Participantes — Leansight (consultora)
+Agustín Villena
+Manuel Olguín
+Harald
+
+# Participantes — Aguas Andinas
+Patricio
+Pato
+Alejandra
+Ale
+Carlos
+Carlos Pareja
+
+# Empresas
+Leansight
+Aguas Andinas
+
+# Stack Esri / GIS
+Esri
+Portal de Esri
+webmap
+webmaps
+SIG
+REST
+servicios REST
+XML
+JSON
+
+# Sistemas / herramientas
+SAP
+Jira
+
+# Terminología del proyecto (servicios/aplicativos/sistemas)
+servicios funcionales
+servicios tecnológicos
+aplicativo
+aplicativos
+sistema
+sistemas
+flujos de valor
+flujos de trabajo
+estándar
+estándares
+
+# Áreas de negocio de Aguas Andinas
+expansión comercial
+distribución
+recolección
+revisores de red
+redes
+grifos
+agua potable
+boleta
+
+# Roles
+usuarios internos
+usuarios adquiridos
+usuarios de negocio
+expertos de negocio
+
+# Chilenismos frecuentes
+cachai
+al tiro
+pega
+chiquillos
+nomás
