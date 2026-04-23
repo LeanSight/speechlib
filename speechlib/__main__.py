@@ -72,6 +72,25 @@ def _parse_speakers(speakers: Optional[str]) -> list[str] | None:
     return [s.strip() for s in speakers.split(",")] if speakers else None
 
 
+def _parse_hotwords(value: Optional[str]) -> list[str] | None:
+    """Parse --hotwords value. Supports '@<path>' (read file) or CSV inline.
+
+    File format: one term per line; empty lines and lines starting with '#'
+    are ignored. Returns None if value is None/empty.
+    """
+    if not value:
+        return None
+    if value.startswith("@"):
+        path = Path(value[1:])
+        terms = [
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        return terms or None
+    return [s.strip() for s in value.split(",")]
+
+
 @app.callback()
 def callback():
     """Speechlib: transcribe audio with speaker diarization and recognition."""
@@ -101,7 +120,8 @@ def run(
         help="Context text biasing Whisper decoding (domain terms, names, jargon)",
     )] = None,
     hotwords: Annotated[Optional[str], typer.Option(
-        help="Comma-separated terms injected as logit bias (alternative to --initial-prompt)",
+        help="Comma-separated terms (or '@<path>' to read one-per-line from file) "
+             "injected as logit bias (alternative to --initial-prompt)",
     )] = None,
     verbose: _verbose_opt = False,
 ):
@@ -124,7 +144,7 @@ def run(
         grouping_mode=grouping.value,
         allowed_speakers=_parse_speakers(speakers),
         initial_prompt=initial_prompt,
-        hotwords=_parse_speakers(hotwords),
+        hotwords=_parse_hotwords(hotwords),
     )
 
 

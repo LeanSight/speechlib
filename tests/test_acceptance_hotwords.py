@@ -90,3 +90,100 @@ def test_cli_run_exposes_hotwords_flag():
     assert "--hotwords" in result.output, (
         f"--hotwords no aparece en `run --help`. Output:\n{result.output}"
     )
+
+
+def test_cli_run_reads_hotwords_from_file_with_at_prefix(tmp_path, monkeypatch):
+    """Given un archivo de keyterms con comentarios y líneas vacías,
+    When el usuario corre `speechlib run <audio> --hotwords @<path>`,
+    Then los términos del archivo llegan a core_analysis como list[str],
+    ignorando líneas vacías y comentarios (#).
+
+    Este es el behavior nuevo: el prefijo '@' indica "leer de archivo"
+    en lugar de interpretar el valor como CSV inline."""
+    keyterms_file = tmp_path / "keyterms.txt"
+    keyterms_file.write_text(
+        "# participantes\n"
+        "Patricio\n"
+        "Alejandra\n"
+        "\n"
+        "# stack\n"
+        "Aguas Andinas\n",
+        encoding="utf-8",
+    )
+    audio = tmp_path / "audio.m4a"
+    audio.write_bytes(b"fake audio content")
+
+    captured = {}
+
+    def fake_core_analysis(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("speechlib.__main__.core_analysis", fake_core_analysis)
+    monkeypatch.setenv("HF_TOKEN", "dummy-token")
+
+    runner = CliRunner()
+    result = runner.invoke(app, [
+        "run", str(audio),
+        "--hotwords", f"@{keyterms_file}",
+    ])
+
+    assert result.exit_code == 0, (
+        f"CLI falló (exit={result.exit_code}): {result.output}"
+    )
+    assert captured.get("hotwords") == ["Patricio", "Alejandra", "Aguas Andinas"], (
+        f"esperaba hotwords=['Patricio', 'Alejandra', 'Aguas Andinas'] "
+        f"(leídos del archivo), recibí: {captured.get('hotwords')!r}"
+    )
+
+
+def test_parse_hotwords_reads_file_with_at_prefix(tmp_path):
+    """Unit: _parse_hotwords('@<path>') lee una línea por término,
+    ignora líneas vacías y comentarios (#)."""
+    from speechlib.__main__ import _parse_hotwords
+    f = tmp_path / "kt.txt"
+    f.write_text("# header\nPatricio\nAlejandra\n\n# stack\nAguas Andinas\n",
+                 encoding="utf-8")
+    assert _parse_hotwords(f"@{f}") == ["Patricio", "Alejandra", "Aguas Andinas"]
+
+
+def test_parse_hotwords_csv_splits_by_comma_and_strips():
+    """Unit: _parse_hotwords('a, b,c') sigue funcionando como CSV inline."""
+    from speechlib.__main__ import _parse_hotwords
+    assert _parse_hotwords("Patricio, Alejandra,Aguas Andinas") == [
+        "Patricio", "Alejandra", "Aguas Andinas",
+    ]
+
+
+def test_parse_hotwords_none_when_value_is_none_or_empty():
+    """Unit: _parse_hotwords(None) y _parse_hotwords('') → None."""
+    from speechlib.__main__ import _parse_hotwords
+    assert _parse_hotwords(None) is None
+    assert _parse_hotwords("") is None
+
+
+def test_cli_run_hotwords_csv_still_works_as_before(tmp_path, monkeypatch):
+    """Regresión: --hotwords "a,b,c" (sin prefijo @) sigue funcionando
+    como CSV inline — no debe interpretarse como path."""
+    audio = tmp_path / "audio.m4a"
+    audio.write_bytes(b"fake audio content")
+
+    captured = {}
+
+    def fake_core_analysis(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("speechlib.__main__.core_analysis", fake_core_analysis)
+    monkeypatch.setenv("HF_TOKEN", "dummy-token")
+
+    runner = CliRunner()
+    result = runner.invoke(app, [
+        "run", str(audio),
+        "--hotwords", "Patricio,Alejandra,Aguas Andinas",
+    ])
+
+    assert result.exit_code == 0, (
+        f"CLI falló (exit={result.exit_code}): {result.output}"
+    )
+    assert captured.get("hotwords") == ["Patricio", "Alejandra", "Aguas Andinas"], (
+        f"esperaba hotwords parseado como CSV, recibí: {captured.get('hotwords')!r}"
+    )
