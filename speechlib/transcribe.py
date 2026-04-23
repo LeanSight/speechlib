@@ -50,9 +50,10 @@ def transcribe_full_aligned(
     """
     model = _load_faster_whisper_model(model_size, quantization)
     batched = BatchedInferencePipeline(model=model)
+    hotwords_str = " ".join(hotwords) if hotwords else None
     whisper_segments, _ = batched.transcribe(
         file_name, language=language, beam_size=1, batch_size=TRANSCRIPTION_BATCH_SIZE,
-        word_timestamps=True, initial_prompt=initial_prompt, hotwords=hotwords,
+        word_timestamps=True, initial_prompt=initial_prompt, hotwords=hotwords_str,
     )
     return _assign_text_to_segments(list(whisper_segments), segments)
 

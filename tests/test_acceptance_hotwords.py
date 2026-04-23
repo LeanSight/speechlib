@@ -36,7 +36,8 @@ def _make_mock_pipeline():
 
 def test_transcribe_full_aligned_forwards_hotwords():
     """Given una lista hotwords, When se llama transcribe_full_aligned,
-    Then batched.transcribe recibe esa lista como kwarg hotwords."""
+    Then batched.transcribe recibe los términos como string space-joined
+    (faster-whisper's hotwords kwarg espera str, no list)."""
     mock_model = _make_mock_model()
     mock_pipeline = _make_mock_pipeline()
     diarization_segs = [[0.0, 3.0, "SPEAKER_00"]]
@@ -53,9 +54,10 @@ def test_transcribe_full_aligned_forwards_hotwords():
         )
 
     kwargs = mock_pipeline.transcribe.call_args.kwargs
-    assert kwargs.get("hotwords") == hotwords, (
-        f"esperaba hotwords={hotwords!r} en batched.transcribe kwargs, "
-        f"recibí: {kwargs}"
+    expected = "Patricio Alejandra Aguas Andinas Esri"
+    assert kwargs.get("hotwords") == expected, (
+        f"esperaba hotwords={expected!r} (string) en batched.transcribe kwargs, "
+        f"recibí: {kwargs!r}"
     )
 
 
