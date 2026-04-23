@@ -26,7 +26,7 @@ def _load_faster_whisper_model(model_size: str, quantization: bool) -> "WhisperM
 
 def transcribe_full_aligned(
     file_name, segments, language, model_size, quantization,
-    *, initial_prompt: str | None = None,
+    *, initial_prompt: str | None = None, hotwords: list[str] | None = None,
 ):
     """Transcribe el audio completo de una vez y mapea texto por overlap de timestamp.
 
@@ -42,6 +42,8 @@ def transcribe_full_aligned(
         quantization: si usar cuantizacion
         initial_prompt: texto opcional que sesga la decodificación de Whisper
             hacia términos de dominio (nombres, jerga, siglas). None = sin sesgo.
+        hotwords: lista opcional de términos que inyectan logit bias puntual
+            (efecto distinto a initial_prompt; ver faster-whisper docs).
 
     Returns:
         lista de [start, end, text, speaker]
@@ -50,7 +52,7 @@ def transcribe_full_aligned(
     batched = BatchedInferencePipeline(model=model)
     whisper_segments, _ = batched.transcribe(
         file_name, language=language, beam_size=1, batch_size=TRANSCRIPTION_BATCH_SIZE,
-        word_timestamps=True, initial_prompt=initial_prompt,
+        word_timestamps=True, initial_prompt=initial_prompt, hotwords=hotwords,
     )
     return _assign_text_to_segments(list(whisper_segments), segments)
 

@@ -100,6 +100,9 @@ def run(
     initial_prompt: Annotated[Optional[str], typer.Option(
         help="Context text biasing Whisper decoding (domain terms, names, jargon)",
     )] = None,
+    hotwords: Annotated[Optional[str], typer.Option(
+        help="Comma-separated terms injected as logit bias (alternative to --initial-prompt)",
+    )] = None,
     verbose: _verbose_opt = False,
 ):
     """Full pipeline: preprocess, diarize, recognize, transcribe, publish."""
@@ -121,6 +124,7 @@ def run(
         grouping_mode=grouping.value,
         allowed_speakers=_parse_speakers(speakers),
         initial_prompt=initial_prompt,
+        hotwords=_parse_speakers(hotwords),
     )
 
 
