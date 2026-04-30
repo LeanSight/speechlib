@@ -1,5 +1,5 @@
 # AXIOMAS DEL PROYECTO
-Última destilación: 2026-04-23 (sesión: --hotwords slice + AAI vs faster-whisper es-CL)
+Última destilación: 2026-04-29 (sesión: isolation score + diagnóstico clips CCS TI + identificación Ricardo/Rita)
 Branch: refactor/speaker-domain
 
 ## Axiomas del dominio
@@ -13,6 +13,8 @@ Branch: refactor/speaker-domain
 - AssemblyAI `speech_model=best` + `language_code=es` **rechaza `keyterms_prompt` server-side**. Solo soportado en `en, en_au, en_uk, en_us`. El SDK acepta el parámetro pero el API devuelve `TranscriptError: "…Use word_boost instead"`. Verificado 2026-04-23 con assemblyai SDK 0.54.1.
 - AssemblyAI `word_boost` con `boost_param="high"` en es-CL tiene **efecto casi nulo sobre errores léxicos obstinados** (nombres propios chilenos y jerga). Verificado empíricamente: 6 errores idénticos entre v1 (sin boost) y v2 (boost="high", 49 terms curados) sobre el mismo audio 35.7 min es-CL.
 - faster-whisper + `--hotwords` sí sesga efectivamente ASR en es-CL: sobre los mismos 49 términos y el mismo audio, eliminó los 6 errores léxicos obstinados (Pandisi, Aguasis×2, WEAP, Gira, Yera) y aumentó conteos de términos correctos (SAP 27→33, Jira 2→5, cachai 2→6, chiquillos 2→5).
+- **Dos tipos de contaminación de clips por overlap detection de pyannote**: Type A (micro-segmentos de frontera entre speakers → isolation filter los elimina) y Type B (cluster espurio que agrupa audio de múltiples personas en un solo SPEAKER_XX → isolation filter no es suficiente, el cluster entero es irrecuperable). Evidencia: SPEAKER_02 en 20260310, 814/1198 segmentos con isolation=0; clips re-extraídos con isolation≥1s aún multi-speaker (verificado 2026-04-29).
+- **Los VTTs con frases de auto-identificación permiten mapear SPEAKER_XX → nombre real sin escuchar clips**. Búsqueda `rg -i "nombre" --glob "*.vtt"` es más rápida y funciona aunque los clips estén contaminados. Evidencia: SPEAKER_02 en 20260310 = Ricardo (`"Yo soy Ricardo"` en línea 211 del VTT); SPEAKER_00 en 20260317_103037 = Rita Allende (`"Rita Allende, jefe de proyectos BIC 75 %"` en línea 9 del VTT).
 
 ## Decisiones activas
 
@@ -24,6 +26,7 @@ Branch: refactor/speaker-domain
 | Pipeline speechlib cambia a `run` → suggest+confirm (sin backdoor `--auto-confirm`, unmatched queda `SPEAKER_XX` raw) | Usuario explícito: "cambio duro, no opcional" | Scripts automatizados en producción que dependan del flujo auto hacen regresión imposible de absorber |
 | Para transcripción es-CL usar `speechlib run --hotwords` (faster-whisper local), NO AssemblyAI | AAI rechaza `keyterms_prompt` en es y `word_boost` es marginal; faster-whisper + hotwords corrige errores léxicos empíricamente (6→0 en audio 35.7 min, 2026-04-23) | AAI libera `keyterms_prompt` para es; aparece otro proveedor cloud con logit bias efectivo en es; o faster-whisper deja de soportar el kwarg |
 | `--hotwords` recibe CSV en CLI, propaga como `list[str]` interno, se joinea a `str` space-separated justo antes de `batched.transcribe` | faster-whisper espera `str`; mantener `list[str]` en la API interna es más semántico y localiza el leakage de la librería en el adapter | Cambia el contract de faster-whisper o la API pública de speechlib expone hotwords directamente |
+| `plan_speaker_samples` usa `min_isolation_ms=1000` en el pipeline (core_analysis.py:109) | Elimina Type A contamination (micro-segmentos de frontera). Default=0 para backward compat. | Se descubre que 1000ms es demasiado agresivo y elimina clips limpios legítimos de alta calidad |
 
 ## Restricciones verificadas
 
@@ -33,6 +36,7 @@ Branch: refactor/speaker-domain
 - `speechlib/core_analysis.py:520` define `_start_compress_thread` que debe llamarse post-preprocess y join-earse antes de publish_to_source_folder cuando `compress && skip_enhance`. (verificado: test `test_compress_runs_parallel_with_diarization` pasa con overhead <2s después del fix `fe47a8d`).
 - RTX 2070 Super Max-Q + faster-whisper `large-v3-turbo` procesa audio es a ~4× realtime. Medido 2026-04-23: 35.7 min audio → 134s wallclock incluyendo todo el pipeline (preprocess 15s + diarize 70s + transcribe 39s + output 10s).
 - AssemblyAI SDK v0.54.1 expone `word_boost`, `boost_param`, `prompt`, `keyterms_prompt`, `keyterms_prompt_options` en `TranscriptionConfig`. El primero funciona en multiidioma; el 4º falla server-side fuera del inglés. Verificado vía `inspect.signature` + llamada real 2026-04-23.
+- **pyannote produce segmentos RTTM solapados en tiempo**: dentro de un segmento asignado a SPEAKER_A puede haber múltiples segmentos de SPEAKER_B. Esto es behavior esperado del overlap detection model, no un bug. Verificado 2026-04-29 en RTTM de 20260310 (SPEAKER_02 6179-6213s contiene 13 bursts de SPEAKER_00).
 
 ## Anti-patrones confirmados
 
@@ -43,6 +47,7 @@ Branch: refactor/speaker-domain
 - **Dejar helpers huérfanos después de un refactor que cambia el flujo** (ej. `_start_compress_thread` post commit `acdf328`) → dead code invisible hasta que un test e2e falla. Alternativa: correr suite completa (no solo tests afectados por el diff) en el PR que cambia el flujo.
 - **MagicMock duck-typed sobre librerías externas con type contracts estrictos** → el test pasa con cualquier tipo (ej. list aceptada donde faster-whisper espera str), el runtime real revienta. Evidencia: commit `74fca53` — `AttributeError: 'list' object has no attribute 'strip'` en `faster_whisper/transcribe.py:1545`. Alternativa: asertear tipo post-boundary (ej. `kwargs["hotwords"] == "term1 term2"` verifica str space-joined).
 - **Usar AssemblyAI `word_boost` para corregir nombres/jerga en es-CL** → efecto marginal (cambia puntuación y segmentación, no léxico). Alternativa: faster-whisper + `--hotwords` (verificado empíricamente 2026-04-23).
+- **Asumir que isolation filter resuelve contaminación Type B (cluster espurio)** → falso: isolation_ms mide gap entre clusters distintos, no detecta si el cluster propio es heterogéneo. Evidencia: SPEAKER_02 en 20260310 re-extraído con isolation≥1s aún multi-speaker (2026-04-29). Alternativa: descartar el cluster completo.
 
 ## Dependencias
 
@@ -54,3 +59,5 @@ Branch: refactor/speaker-domain
 - [AXIOMA: faster-whisper `hotwords` espera `str`] → [DECISIÓN: `--hotwords` recibe CSV, propaga list[str] interno, joinea a str en `transcribe.py` antes de batched.transcribe]
 - [AXIOMA: AAI es rechaza keyterms_prompt + word_boost marginal en es-CL] → [DECISIÓN: speechlib+hotwords default para es-CL, no AAI]
 - [RESTRICCIÓN: RTX 2070 Super Max-Q procesa 35 min a ~134s] → [DECISIÓN: transcripción local viable; no hace falta cloud ASR para audios <1h en es-CL]
+- [AXIOMA: Type A contamination = frontera de speaker] → [DECISIÓN: min_isolation_ms=1000 en pipeline]
+- [AXIOMA: Type B contamination = cluster espurio, isolation no resuelve] → [RESTRICCIÓN: clusters espurios son irrecuperables, descartar]
