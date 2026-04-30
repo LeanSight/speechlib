@@ -276,3 +276,83 @@ class TestEdgeCases:
             transcript, max_clips_per_speaker=10, min_clip_duration_ms=0
         )
         assert len(plans[0].clips) == 2
+
+
+# ── Isolation score filter ────────────────────────────────────────────────────
+
+
+class TestIsolationFilter:
+    def test_segment_with_low_isolation_excluded(self):
+        """Gap 500ms < min_isolation_ms=1000 → segmento excluido del plan."""
+        from speechlib.domain.sample_extraction import plan_speaker_samples
+
+        transcript = _transcript(
+            _seg(0, 3000, "SPEAKER_B"),
+            _seg(3500, 6500, "SPEAKER_A"),  # isolation = 3500-3000 = 500ms
+        )
+        plans = plan_speaker_samples(
+            transcript,
+            max_clips_per_speaker=5,
+            min_clip_duration_ms=500,
+            min_isolation_ms=1000,
+        )
+        labels = {p.speaker_label for p in plans}
+        assert "SPEAKER_A" not in labels, (
+            f"SPEAKER_A debería estar filtrado (isolation 500ms < 1000ms), pero aparece en {labels}"
+        )
+
+    def test_segment_with_sufficient_isolation_included(self):
+        """Gap 2000ms >= min_isolation_ms=1000 → segmento incluido en el plan."""
+        from speechlib.domain.sample_extraction import plan_speaker_samples
+
+        transcript = _transcript(
+            _seg(0, 2000, "SPEAKER_B"),
+            _seg(4000, 7000, "SPEAKER_A"),  # isolation = 4000-2000 = 2000ms
+        )
+        plans = plan_speaker_samples(
+            transcript,
+            max_clips_per_speaker=5,
+            min_clip_duration_ms=500,
+            min_isolation_ms=1000,
+        )
+        labels = {p.speaker_label for p in plans}
+        assert "SPEAKER_A" in labels, (
+            f"SPEAKER_A debería estar incluido (isolation 2000ms >= 1000ms), pero labels={labels}"
+        )
+
+    def test_only_isolated_segments_of_speaker_survive_filter(self):
+        """Speaker con dos segmentos: uno aislado y uno en transición rápida.
+        Solo el aislado debe quedar en el plan."""
+        from speechlib.domain.sample_extraction import plan_speaker_samples
+
+        transcript = _transcript(
+            _seg(0, 3000, "SPEAKER_B"),
+            _seg(3200, 5000, "SPEAKER_A"),   # isolation=200ms → filtrado
+            _seg(10000, 13000, "SPEAKER_A"), # isolation=5000ms → incluido
+        )
+        plans = plan_speaker_samples(
+            transcript,
+            max_clips_per_speaker=5,
+            min_clip_duration_ms=500,
+            min_isolation_ms=1000,
+        )
+        a_plans = [p for p in plans if p.speaker_label == "SPEAKER_A"]
+        assert len(a_plans) == 1
+        assert len(a_plans[0].clips) == 1
+        assert a_plans[0].clips[0].start_ms == 10000
+
+    def test_default_no_isolation_filter_is_backward_compatible(self):
+        """Sin min_isolation_ms, el comportamiento es idéntico al original."""
+        from speechlib.domain.sample_extraction import plan_speaker_samples
+
+        transcript = _transcript(
+            _seg(0, 1000, "SPEAKER_B"),
+            _seg(1001, 4000, "SPEAKER_A"),  # isolation=1ms, quedaría filtrado con min=1000
+        )
+        plans = plan_speaker_samples(
+            transcript, max_clips_per_speaker=5, min_clip_duration_ms=500
+        )
+        labels = {p.speaker_label for p in plans}
+        assert "SPEAKER_A" in labels, (
+            "Sin min_isolation_ms el filtro no debe aplicarse (backward compat)"
+        )

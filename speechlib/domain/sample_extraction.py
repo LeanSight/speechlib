@@ -14,6 +14,7 @@ Estilo GOOS-sin-mocks: cero I/O. La ejecucion (cortar el audio y escribir
 WAVs) vive en speechlib/services/extract_samples.py.
 """
 
+import sys
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
@@ -39,6 +40,21 @@ class SpeakerSamplePlan:
     speaker_label: str
     is_identified: bool
     clips: tuple[SampleClip, ...]
+
+
+def _isolation_ms(seg: TranscriptSegment, all_segments: Iterable[TranscriptSegment]) -> int:
+    """Gap mínimo en ms desde seg hasta cualquier segmento de otro speaker.
+
+    Si no hay otros speakers en el transcript, retorna sys.maxsize (aislado).
+    """
+    min_gap = sys.maxsize
+    for other in all_segments:
+        if other.speaker.label == seg.speaker.label:
+            continue
+        gap = max(0, seg.start_ms - other.end_ms, other.start_ms - seg.end_ms)
+        if gap < min_gap:
+            min_gap = gap
+    return min_gap
 
 
 def _build_plan_for_speaker(
@@ -72,6 +88,7 @@ def plan_speaker_samples(
     max_clips_per_speaker: int,
     min_clip_duration_ms: int,
     min_unidentified_clip_duration_ms: Optional[int] = None,
+    min_isolation_ms: int = 0,
 ) -> tuple[SpeakerSamplePlan, ...]:
     """Construye los planes de extraccion para todos los speakers del transcript.
 
@@ -85,6 +102,10 @@ def plan_speaker_samples(
             None = usa el mismo threshold que identificados (backward compat).
             Pasar un valor menor (ej. 500) le da visibilidad a speakers con
             audio escaso para que el usuario pueda al menos saber que existen.
+        min_isolation_ms: gap mínimo en ms requerido entre un segmento y
+            cualquier segmento de otro speaker para que sea elegible como clip.
+            0 = sin filtro (default, backward compat). 1000 es el valor
+            recomendado para evitar clips con voces de transición.
 
     Returns:
         Tuple de planes ordenado: identificados primero (alfabetico) y luego
@@ -115,6 +136,11 @@ def plan_speaker_samples(
             min_clip_duration_ms if is_identified
             else min_unidentified_clip_duration_ms
         )
+        if min_isolation_ms > 0:
+            segments = [
+                s for s in segments
+                if _isolation_ms(s, transcript.segments) >= min_isolation_ms
+            ]
         plan = _build_plan_for_speaker(
             label=label,
             is_identified=is_identified,

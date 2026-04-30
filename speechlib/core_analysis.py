@@ -111,6 +111,7 @@ def _publish_domain_artifacts(
             max_clips_per_speaker=5,
             min_clip_duration_ms=1500,
             min_unidentified_clip_duration_ms=500,
+            min_isolation_ms=1000,
         )
         if plans:
             extract_speaker_samples(
