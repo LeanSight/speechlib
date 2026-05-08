@@ -465,9 +465,54 @@ Si la transcripción da resultados pobres:
 
 ---
 
+## Compatibilidad con Google Drive y Google Photos
+
+Los videos comprimidos con esta guia estan optimizados para disponibilidad inmediata en Google Drive y Google Photos.
+
+### Formato nativo de Google Drive (sin transcodificacion server-side)
+
+Google Drive transcodifica internamente cada video subido para generar versiones de streaming. Mientras procesa, el video no es reproducible para otros dispositivos ni usuarios compartidos. El formato que minimiza este tiempo es:
+
+| Parametro | Requerimiento Google Drive | Esta guia |
+|-----------|---------------------------|-----------|
+| **Container** | MP4 | MP4 ✓ |
+| **Video codec** | H.264 | libx264 (H.264) ✓ |
+| **Audio codec** | AAC | AAC ✓ |
+| **Resolucion max playback** | 1920x1080 | Hasta 1080p ✓ |
+| **moov atom** | Al inicio (streaming) | `-movflags +faststart` ✓ |
+
+### Codecs que Google Drive NO soporta para playback
+
+| Codec | Resultado |
+|-------|-----------|
+| H.265/HEVC | Error "unable to process this video" o procesamiento muy lento |
+| VP9 | No soportado para playback |
+| AV1 | No soportado para playback |
+
+### Por que los videos originales tardan tanto
+
+Videos originales de celular (~17 Mbps, H.264) estan en formato compatible, pero el bitrate alto obliga a Google a transcodificar mas datos. Comparacion:
+
+| Video | Bitrate | Tiempo procesamiento Google |
+|-------|---------|---------------------------|
+| Original celular | ~17 Mbps | Lento (minutos) |
+| Comprimido CRF 28 | ~2-3 Mbps | Rapido (segundos) |
+
+### Recomendacion
+
+Siempre subir los videos **ya comprimidos** con esta guia. El formato producido (MP4 + H.264 + AAC + faststart + ≤1080p + bajo bitrate) es exactamente lo que Google Drive y Google Photos esperan, minimizando el tiempo de procesamiento server-side.
+
+> Fuente: [Google Drive - Store & play video](https://support.google.com/drive/answer/2423694) (mayo 2026)
+
 ---
 
-## Histórico de Cambios
+## Historico de Cambios
+
+### v2.2 (8 de Mayo de 2026)
+- Agregada seccion "Compatibilidad con Google Drive y Google Photos"
+- Documentado formato nativo de Google Drive (MP4 + H.264 + AAC) para evitar transcodificacion lenta
+- Documentados codecs no soportados (HEVC, VP9, AV1)
+- Confirmado que el output de esta guia ya es el formato optimo para Google Drive/Photos
 
 ### v2.0 (11 de Marzo de 2026 - **ACTUALIZACIÓN CRÍTICA**)
 
@@ -499,6 +544,7 @@ Si la transcripción da resultados pobres:
 - Sin detección de rotación
 - **DESCONTINUADO POR INEFICACIA**
 
-*Documento actualizado el 11 de Marzo de 2026*
-*Optimizado para transcripción automática con Google Cloud STT, Whisper y compatibles*
+*Documento actualizado el 8 de Mayo de 2026*
+*Optimizado para transcripcion automatica con Google Cloud STT, Whisper y compatibles*
+*Formato compatible con Google Drive y Google Photos (disponibilidad inmediata)*
 *Rotación de metadata ahora manejada correctamente*
