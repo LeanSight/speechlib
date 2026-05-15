@@ -1,6 +1,20 @@
 [tool.uv]
-# Este proyecto usa mamba como ambiente. No crear .venv.
-managed = false
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 
 [project]
 name = "speechlib"
@@ -28,10 +42,11 @@ dependencies = [
     "pyannote-audio==4.0.4",
     "pydantic==2.12.5",
     "scipy==1.15.3",
-    "torch==2.10.0",
-    "torchaudio==2.10.0",
-    "torchvision==0.25.0",
+    "torch>=2.10.0",
+    "torchaudio>=2.10.0",
+    "torchvision>=0.25.0",
     "transformers==5.3.0",
+    "yamlargparse>=1.31",
 ]
 
 [tool.setuptools.packages.find]
