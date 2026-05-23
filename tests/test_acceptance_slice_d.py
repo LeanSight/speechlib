@@ -14,7 +14,7 @@ from speechlib.resample_to_16k import resample_to_16k
 from speechlib.loudnorm import loudnorm
 from speechlib.enhance_audio import enhance_audio
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.e2e]
 
 
 def test_pipeline_produces_enhanced_file(tmp_path):

@@ -9,7 +9,7 @@ from conftest import make_tone_wav
 from speechlib.enhance_audio import enhance_audio
 from speechlib.audio_state import AudioState
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.e2e]
 
 
 def _state(path: Path) -> AudioState:
