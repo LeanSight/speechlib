@@ -139,3 +139,9 @@ No conda/mamba needed. macOS gets CPU-only wheels from PyPI.
 - AssemblyAI `keyterms_prompt` rejected for non-English — use `word_boost` (marginal for es-CL)
 - `diarization.rttm` cache NOT auto-invalidated when `--speakers` count changes — delete `.<stem>/diarization.rttm` manually
 - `clearvoice` imported via `sys.path.insert` in `enhance_audio.py` from `c:\workspace\#dev\ClearerVoice-Studio\clearvoice`. Its dep `yamlargparse` is declared in speechlib's pyproject.toml.
+- **ClearerVoice-Studio clone on Windows**: the repo contains `train/target_speaker_extraction/data/wsj0_2mix/train/aux.scp` — `aux` is a reserved device name on NTFS (like `con`, `prn`, `nul`), so `git clone` fails. Fix: use sparse checkout to pull only the `clearvoice/` subfolder (the only part speechlib needs):
+  ```bash
+  git clone --sparse --filter=blob:none <repo-url> ClearerVoice-Studio
+  cd ClearerVoice-Studio
+  git sparse-checkout set clearvoice
+  ```
