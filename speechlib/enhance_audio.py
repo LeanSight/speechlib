@@ -1,6 +1,3 @@
-import sys
-sys.path.insert(0, r"c:\workspace\#dev\ClearerVoice-Studio\clearvoice")
-from clearvoice import ClearVoice
 from .audio_state import AudioState
 from .step_timer import timed
 from .kernel_profiler import timed as ktimed
@@ -15,10 +12,15 @@ def enhance_audio(state: AudioState) -> AudioState:
     """Aplica speech enhancement con ClearVoice MossFormer2_SE_48K.
 
     Escribe en artifacts_dir/enhanced.wav. Si ya existe, retorna cache.
+    ClearVoice se importa de forma lazy: solo se requiere instalado
+    cuando enhance_audio() se invoca (toggle --compress), no al
+    importar speechlib.
     """
     out_path = state.artifacts_dir / "enhanced.wav"
     if out_path.exists():
         return state.model_copy(update={"working_path": out_path, "is_enhanced": True})
+
+    from clearvoice import ClearVoice
 
     global _clearvoice_model
     if _clearvoice_model is None:
