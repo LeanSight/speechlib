@@ -243,11 +243,13 @@ def _resolve_voice_library(
             if match is not None and match.slug in full_library:
                 if match.confidence == "low":
                     logger.warning(
-                        "Low-confidence match: '%s' → '%s' (tier=%s). "
+                        "Skipping low-confidence match: '%s' → '%s' (tier=%s). "
                         "Use full name to confirm.",
                         name, match.slug, match.tier,
                     )
-                matched_slugs.add(match.slug)
+                    without_sample.append(name)
+                else:
+                    matched_slugs.add(match.slug)
             else:
                 without_sample.append(name)
         return filter_voice_library(full_library, allowed_names=matched_slugs), without_sample
