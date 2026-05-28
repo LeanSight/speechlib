@@ -1,31 +1,42 @@
 """
-Domain tests for fuzzy speaker name → voice library slug matching.
+Domain tests for fuzzy speaker name -> voice library slug matching.
 
-The voice library uses folder slugs (e.g., "alicanto-nicolas-loira") while
-the --speakers CLI flag uses human names (e.g., "Nicolás Loira"). The matching
+The voice library uses folder slugs (e.g., "acme-elena-rios") while
+the --speakers CLI flag uses human names (e.g., "Elena Rios"). The matching
 function bridges these two representations.
+
+All names and organizations are fictional. No production data.
 """
 
 import pytest
-from speechlib.domain.name_matching import match_speaker_to_library, MatchResult
+from speechlib.domain.name_matching import (
+    MatchResult,
+    match_speaker_to_library,
+    match_speaker_with_confidence,
+)
 
 
-# ── Fixtures ─────────────────────────────────────────────────────────────────
+# -- Fixtures (fictional) ----------------------------------------------------
 
-LIBRARY_DISPLAY_NAMES = {
-    "agustin-villena": "Agustín Villena",
-    "alicanto-nicolas-loira": "Nicolás Loira",
-    "carlos-soublette": "Carlos Soublette",
-    "cristian-correa": "Cristian Correa",
-    "juan-pablo-traverso": "Juan Pablo Traverso",
-    "manuel-olguin": "Manuel Olguín",
-    "patricio-renner": "Patricio Renner",
-    "paula-lapostol": "Paula Lapostol",
-    "ximena-vial": "Ximena Vial",
+LIBRARY = {
+    # org-prefixed slug, accented display_name
+    "acme-elena-rios": "Elena Ríos",
+    # plain slug, accented display_name
+    "francisco-muñoz": "Francisco Muñoz",
+    # slug with shared first name (two "Carlos" scenario)
+    "carlos-delgado": "Carlos Delgado",
+    # compound first name
+    "juan-pablo-herrera": "Juan Pablo Herrera",
+    # short surname
+    "maria-sol": "María Sol",
+    # common first name, unique surname
+    "pedro-lagos": "Pedro Lagos",
+    # another common first name
+    "ana-castro": "Ana Castro",
 }
 
 
-# ── Exact display_name matches (with accent normalization) ───────────────────
+# -- Exact display_name matches (with accent normalization) -------------------
 
 
 class TestExactDisplayNameMatch:
@@ -38,22 +49,22 @@ class TestExactDisplayNameMatch:
     @pytest.mark.parametrize(
         "name, expected_slug",
         [
-            ("Agustín Villena", "agustin-villena"),
-            ("Agustin Villena", "agustin-villena"),
-            ("agustin villena", "agustin-villena"),
-            ("Nicolás Loira", "alicanto-nicolas-loira"),
-            ("Nicolas Loira", "alicanto-nicolas-loira"),
-            ("Carlos Soublette", "carlos-soublette"),
-            ("Juan Pablo Traverso", "juan-pablo-traverso"),
-            ("Ximena Vial", "ximena-vial"),
+            ("Elena Ríos", "acme-elena-rios"),
+            ("Elena Rios", "acme-elena-rios"),
+            ("elena rios", "acme-elena-rios"),
+            ("Francisco Muñoz", "francisco-muñoz"),
+            ("Francisco Munoz", "francisco-muñoz"),
+            ("Carlos Delgado", "carlos-delgado"),
+            ("Juan Pablo Herrera", "juan-pablo-herrera"),
+            ("María Sol", "maria-sol"),
         ],
     )
     def test_matches_display_name(self, name, expected_slug):
-        result = match_speaker_to_library(name, LIBRARY_DISPLAY_NAMES)
+        result = match_speaker_to_library(name, LIBRARY)
         assert result == expected_slug
 
 
-# ── Nickname / prefix matches ────────────────────────────────────────────────
+# -- Nickname / prefix matches -----------------------------------------------
 
 
 class TestNicknameMatch:
@@ -66,16 +77,18 @@ class TestNicknameMatch:
     @pytest.mark.parametrize(
         "name, expected_slug",
         [
-            ("Nico Loira", "alicanto-nicolas-loira"),
-            ("Pato Renner", "patricio-renner"),
+            # "Ele" is prefix of "Elena"
+            ("Ele Ríos", "acme-elena-rios"),
+            # "Fran" is prefix of "Francisco"
+            ("Fran Muñoz", "francisco-muñoz"),
         ],
     )
     def test_nickname_prefix_matches(self, name, expected_slug):
-        result = match_speaker_to_library(name, LIBRARY_DISPLAY_NAMES)
+        result = match_speaker_to_library(name, LIBRARY)
         assert result == expected_slug
 
 
-# ── Single-token unique match ────────────────────────────────────────────────
+# -- Single-token unique match -----------------------------------------------
 
 
 class TestSingleTokenMatch:
@@ -88,16 +101,16 @@ class TestSingleTokenMatch:
     @pytest.mark.parametrize(
         "name, expected_slug",
         [
-            ("Villena", "agustin-villena"),
-            ("Loira", "alicanto-nicolas-loira"),
+            ("Lagos", "pedro-lagos"),
+            ("Ríos", "acme-elena-rios"),
         ],
     )
     def test_unique_single_token(self, name, expected_slug):
-        result = match_speaker_to_library(name, LIBRARY_DISPLAY_NAMES)
+        result = match_speaker_to_library(name, LIBRARY)
         assert result == expected_slug
 
 
-# ── Speakers NOT in library (must return None) ───────────────────────────────
+# -- Speakers NOT in library (must return None) -------------------------------
 
 
 class TestNoMatch:
@@ -110,18 +123,18 @@ class TestNoMatch:
     @pytest.mark.parametrize(
         "name",
         [
-            "Orlando Rivera",
-            "Carlos Acosta",
-            "Daniel Hernández",
-            "Carlos Rivera",
+            "Roberto Fuentes",
+            "Carlos Mendoza",
+            "Diana Hernández",
+            "Carlos Fuentes",
         ],
     )
     def test_unknown_speaker_returns_none(self, name):
-        result = match_speaker_to_library(name, LIBRARY_DISPLAY_NAMES)
+        result = match_speaker_to_library(name, LIBRARY)
         assert result is None
 
 
-# ── Ambiguous single-token (must return None) ────────────────────────────────
+# -- Ambiguous single-token (must return None) --------------------------------
 
 
 class TestAmbiguousSingleToken:
@@ -133,8 +146,8 @@ class TestAmbiguousSingleToken:
 
     def test_ambiguous_first_name_returns_none(self):
         lib_with_two_carlos = {
-            **LIBRARY_DISPLAY_NAMES,
-            "carlos-acosta": "Carlos Acosta",
+            **LIBRARY,
+            "carlos-mendoza": "Carlos Mendoza",
         }
         result = match_speaker_to_library("Carlos", lib_with_two_carlos)
         assert result is None
@@ -145,8 +158,8 @@ class TestAmbiguousSingleToken:
         When   "Carlos" alone is provided
         Then   it matches but with low confidence (single-token match)
         """
-        result = match_speaker_to_library("Carlos", LIBRARY_DISPLAY_NAMES)
-        assert result == "carlos-soublette"
+        result = match_speaker_to_library("Carlos", LIBRARY)
+        assert result == "carlos-delgado"
 
     def test_single_token_match_has_low_confidence(self):
         """
@@ -154,37 +167,53 @@ class TestAmbiguousSingleToken:
         When   checked with match_with_confidence
         Then   the result has low confidence to signal the caller to verify
         """
-        from speechlib.domain.name_matching import match_speaker_with_confidence
-
-        result = match_speaker_with_confidence("Carlos", LIBRARY_DISPLAY_NAMES)
+        result = match_speaker_with_confidence("Carlos", LIBRARY)
         assert result is not None
-        assert result.slug == "carlos-soublette"
+        assert result.slug == "carlos-delgado"
         assert result.confidence == "low"
 
     def test_full_name_match_has_high_confidence(self):
-        from speechlib.domain.name_matching import match_speaker_with_confidence
-
-        result = match_speaker_with_confidence(
-            "Carlos Soublette", LIBRARY_DISPLAY_NAMES
-        )
+        result = match_speaker_with_confidence("Carlos Delgado", LIBRARY)
         assert result is not None
-        assert result.slug == "carlos-soublette"
+        assert result.slug == "carlos-delgado"
         assert result.confidence == "high"
 
 
-# ── Surname mismatch prevents false positive ─────────────────────────────────
+# -- Surname mismatch prevents false positive --------------------------------
 
 
 class TestSurnameMismatch:
     """
-    Given  "Carlos Soublette" enrolled in the library
-    When   "Carlos Acosta" is queried (same first name, different surname)
-    Then   None is returned — surname mismatch blocks the match
+    Given  "Carlos Delgado" enrolled in the library
+    When   "Carlos Mendoza" is queried (same first name, different surname)
+    Then   None is returned -- surname mismatch blocks the match
 
     This is the critical safety property: shared first names must not
     cause cross-matching between different people.
     """
 
-    def test_carlos_acosta_does_not_match_carlos_soublette(self):
-        result = match_speaker_to_library("Carlos Acosta", LIBRARY_DISPLAY_NAMES)
+    def test_same_first_name_different_surname_returns_none(self):
+        result = match_speaker_to_library("Carlos Mendoza", LIBRARY)
         assert result is None
+
+
+# -- Org-prefixed slug resolution ---------------------------------------------
+
+
+class TestOrgPrefixedSlug:
+    """
+    Given  a voice library where a slug has an org prefix (e.g., "acme-elena-rios")
+    When   the display_name matches ("Elena Rios")
+    Then   the org-prefixed slug is returned correctly
+
+    The org prefix in the slug must not prevent matching against the
+    display_name which does not include the org.
+    """
+
+    def test_org_prefix_does_not_block_display_name_match(self):
+        result = match_speaker_to_library("Elena Rios", LIBRARY)
+        assert result == "acme-elena-rios"
+
+    def test_org_prefix_does_not_block_nickname_match(self):
+        result = match_speaker_to_library("Ele Rios", LIBRARY)
+        assert result == "acme-elena-rios"
