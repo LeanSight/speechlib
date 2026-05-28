@@ -12,6 +12,7 @@ Lo que sobrevive aqui es solo I/O:
 - Constantes: SPEAKER_SIMILARITY_THRESHOLD, MIN_MARGIN, MIN_SEGMENT_DURATION_S
 """
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -56,6 +57,29 @@ def get_embedding(audio_path: str) -> np.ndarray:
 
 
 # cosine_similarity importada de domain.recognition (canonica, sin scipy)
+
+
+def load_display_names(voices_folder: Path) -> dict[str, str]:
+    """Load {slug: display_name} from speaker.json files in the voice library.
+
+    Falls back to slug itself if speaker.json is missing or has no display_name.
+    I/O boundary: reads JSON files from disk.
+    """
+    result: dict[str, str] = {}
+    voices_folder = Path(voices_folder)
+    for entry in sorted(voices_folder.iterdir()):
+        if not entry.is_dir() or entry.name.startswith(VOICES_SKIP_PREFIX):
+            continue
+        speaker_json = entry / "speaker.json"
+        if speaker_json.exists():
+            try:
+                data = json.loads(speaker_json.read_text(encoding="utf-8"))
+                result[entry.name] = data.get("display_name", entry.name)
+            except (json.JSONDecodeError, OSError):
+                result[entry.name] = entry.name
+        else:
+            result[entry.name] = entry.name
+    return result
 
 
 def load_voice_embeddings(

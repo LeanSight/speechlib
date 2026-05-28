@@ -24,6 +24,7 @@ from .speaker_recognition import (
     SPEAKER_SIMILARITY_THRESHOLD,
     _get_inference,
     load_avg_voice_embeddings,
+    load_display_names,
 )
 from .audio_utils import slice_and_save
 from .domain.recognition import (
@@ -34,6 +35,7 @@ from .domain.recognition import (
     filter_voice_library,
     select_segments_for_embedding,
 )
+from .domain.name_matching import match_speaker_with_confidence
 from .domain.transcript import Transcript
 from .services.transcript_builder import apply_speaker_map_to_segments
 
@@ -233,9 +235,22 @@ def _resolve_voice_library(
     """Carga voice library y separa speakers con/sin sample. I/O boundary."""
     full_library = load_avg_voice_embeddings(Path(voices_folder), enhanced=enhanced)
     if allowed_speakers is not None:
-        with_sample = set(allowed_speakers) & set(full_library.keys())
-        without_sample = [s for s in allowed_speakers if s not in full_library]
-        return filter_voice_library(full_library, allowed_names=with_sample), without_sample
+        display_names = load_display_names(Path(voices_folder))
+        matched_slugs = set()
+        without_sample = []
+        for name in allowed_speakers:
+            match = match_speaker_with_confidence(name, display_names)
+            if match is not None and match.slug in full_library:
+                if match.confidence == "low":
+                    logger.warning(
+                        "Low-confidence match: '%s' → '%s' (tier=%s). "
+                        "Use full name to confirm.",
+                        name, match.slug, match.tier,
+                    )
+                matched_slugs.add(match.slug)
+            else:
+                without_sample.append(name)
+        return filter_voice_library(full_library, allowed_names=matched_slugs), without_sample
     return full_library, []
 
 
