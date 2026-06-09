@@ -33,3 +33,23 @@ def test_statspool_std_dof_warning_is_suppressed():
     assert not any(
         "degrees of freedom" in str(w.message) for w in recorded
     ), "el UserWarning de std() dof <= 0 deberia estar suprimido"
+
+
+def test_pyannote_tf32_reproducibility_warning_is_suppressed():
+    """#3 TF32: pyannote ReproducibilityWarning no debe propagarse.
+
+    pyannote 4.x deshabilita TF32 en CUDA al mover el pipeline a device y lo
+    anuncia con un ReproducibilityWarning (subclase de UserWarning). speechlib
+    acepta el disable (exactitud > velocidad) y solo silencia el anuncio. La
+    politica de re-habilitar TF32 (Ampere+) queda fuera de este slice.
+    """
+    from speechlib.core_analysis import _configure_runtime_warnings
+    from pyannote.audio.utils.reproducibility import ReproducibilityWarning
+
+    with warnings.catch_warnings(record=True) as recorded:
+        _configure_runtime_warnings()
+        warnings.warn("TensorFloat-32 (TF32) has been disabled", ReproducibilityWarning)
+
+    assert not any(
+        issubclass(w.category, ReproducibilityWarning) for w in recorded
+    ), "el ReproducibilityWarning de TF32 deberia estar suprimido"

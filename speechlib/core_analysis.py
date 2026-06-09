@@ -33,6 +33,17 @@ def _configure_runtime_warnings() -> None:
         category=UserWarning,
     )
 
+    # #3 TF32: pyannote 4.x deshabilita TF32 en CUDA al mover el pipeline a
+    # device, por reproducibilidad/exactitud, y lo anuncia con un
+    # ReproducibilityWarning. speechlib acepta el disable (para transcripts de
+    # memoria institucional la exactitud pesa mas que un pequeno % de velocidad
+    # de matmul) y solo silencia el anuncio. Cualquier re-habilitacion de TF32
+    # por performance debe ir guardada a Ampere+
+    # (torch.cuda.get_device_capability()[0] >= 8) y es NO-OP en Turing.
+    from pyannote.audio.utils.reproducibility import ReproducibilityWarning
+
+    warnings.filterwarnings("ignore", category=ReproducibilityWarning)
+
 
 _configure_runtime_warnings()
 
