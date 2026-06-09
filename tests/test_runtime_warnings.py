@@ -20,9 +20,10 @@ def test_statspool_std_dof_warning_is_suppressed():
     suprimir el ruido. (El path de embedding propio de speechlib ya esta
     guardado por MIN_SEGMENT_DURATION_S / select_segments_for_embedding.)
     """
-    import speechlib.core_analysis  # noqa: F401  side-effect: registra filtros
+    from speechlib.core_analysis import _configure_runtime_warnings
 
     with warnings.catch_warnings(record=True) as recorded:
+        _configure_runtime_warnings()
         warnings.warn(
             "std(): degrees of freedom is <= 0. Correction should be strictly "
             "less than the reduction factor.",
