@@ -10,6 +10,52 @@ logger = logging.getLogger(__name__)
 # Importar compat ANTES de cualquier modulo que use torchaudio (pyannote, etc.)
 from . import compat  # noqa: F401  side-effect: patches torchaudio
 
+def _configure_runtime_warnings() -> None:
+    """Suprime los runtime warnings ruidosos de las deps (torch/torchaudio/pyannote).
+
+    Idempotente: se llama una vez al importar el pipeline, y los tests pueden
+    invocarla directamente (pytest restaura warnings.filters entre tests, asi que
+    depender solo del side-effect de import seria fragil). Cada filtro se limita
+    por mensaje/categoria; no se silencia ninguna categoria de forma amplia.
+
+    Ver devdocs/IMPROVE-runtime-warnings.md.
+    """
+    import logging as _logging
+    import warnings
+
+    # #1 triton: torch.utils.flop_counter loguea "triton not found; flop counting
+    # will not work for triton kernels" via logging.Logger.warning (NO
+    # warnings.warn) cuando torch trae CUDA pero triton no esta instalado. Triton
+    # no tiene wheel oficial de Windows; su ausencia es legitima y el FLOP counter
+    # no se usa. Como es un logging warning, se silencia subiendo el nivel del
+    # logger especifico (filterwarnings no aplica aqui).
+    _logging.getLogger("torch.utils.flop_counter").setLevel(_logging.ERROR)
+
+    # #4 StatsPool: pyannote computa std(dim=-1, correction=1) sobre segmentos de
+    # 1 frame durante la diarizacion interna -> ATen avisa "degrees of freedom
+    # <= 0" y devuelve NaN. speechlib no controla esa llamada (es interna a
+    # pyannote); el path de embedding propio ya esta guardado por
+    # MIN_SEGMENT_DURATION_S. Solo silenciamos el ruido.
+    warnings.filterwarnings(
+        "ignore",
+        message=r"std\(\): degrees of freedom is <= 0",
+        category=UserWarning,
+    )
+
+    # #3 TF32: pyannote 4.x deshabilita TF32 en CUDA al mover el pipeline a
+    # device, por reproducibilidad/exactitud, y lo anuncia con un
+    # ReproducibilityWarning. speechlib acepta el disable (para transcripts de
+    # memoria institucional la exactitud pesa mas que un pequeno % de velocidad
+    # de matmul) y solo silencia el anuncio. Cualquier re-habilitacion de TF32
+    # por performance debe ir guardada a Ampere+
+    # (torch.cuda.get_device_capability()[0] >= 8) y es NO-OP en Turing.
+    from pyannote.audio.utils.reproducibility import ReproducibilityWarning
+
+    warnings.filterwarnings("ignore", category=ReproducibilityWarning)
+
+
+_configure_runtime_warnings()
+
 from .wav_segmenter import wav_file_segmentation
 from .transcribe import transcribe_full_aligned
 from .step_timer import measure, print_report
