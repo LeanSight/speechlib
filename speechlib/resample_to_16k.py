@@ -14,5 +14,5 @@ def resample_to_16k(state: AudioState) -> AudioState:
     if sr != TARGET_SR:
         waveform = torchaudio.functional.resample(waveform, sr, TARGET_SR)
 
-    torchaudio.save(str(out_path), waveform, TARGET_SR, bits_per_sample=16)
+    torchaudio.save(str(out_path), waveform, TARGET_SR)
     return state.model_copy(update={"working_path": out_path, "is_16khz": True})

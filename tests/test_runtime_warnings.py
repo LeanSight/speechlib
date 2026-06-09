@@ -53,3 +53,33 @@ def test_pyannote_tf32_reproducibility_warning_is_suppressed():
     assert not any(
         issubclass(w.category, ReproducibilityWarning) for w in recorded
     ), "el ReproducibilityWarning de TF32 deberia estar suprimido"
+
+
+def test_torchaudio_save_emits_no_bits_per_sample_warning(tmp_path):
+    """#2 bits_per_sample: torchaudio.save no debe avisar (kwarg no-op removido).
+
+    torchaudio 2.10+ enruta save() por TorchCodec AudioEncoder, que ignora
+    bits_per_sample y avisa por cada llamada. PCM 16-bit es el default para un
+    target .wav, asi que quitar el kwarg deja la salida intacta y elimina el
+    warning en la fuente. Aqui se verifica via resample_to_16k (uno de los 5
+    call sites) que NO se emite el warning y que la salida sigue siendo 16-bit.
+    """
+    import wave
+    from conftest import make_wav
+    from speechlib.resample_to_16k import resample_to_16k
+    from speechlib.audio_state import AudioState
+
+    wav = make_wav(tmp_path / "audio.wav", framerate=44100, n_frames=4410)
+    state = AudioState(source_path=wav, working_path=wav,
+                       is_wav=True, is_mono=True, is_16bit=True)
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        result = resample_to_16k(state)
+
+    assert not any(
+        "bits_per_sample" in str(w.message) for w in recorded
+    ), "torchaudio.save no deberia avisar por bits_per_sample"
+
+    with wave.open(str(result.working_path), "rb") as wf:
+        assert wf.getsampwidth() == 2, "la salida debe seguir siendo PCM 16-bit"

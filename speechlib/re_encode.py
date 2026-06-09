@@ -18,6 +18,6 @@ def re_encode(state: AudioState) -> AudioState:
     waveform, sr = torchaudio.load(str(state.working_path))
     state.artifacts_dir.mkdir(parents=True, exist_ok=True)
     out_path = state.artifacts_dir / "16bit.wav"
-    torchaudio.save(str(out_path), waveform, sr, bits_per_sample=16)
+    torchaudio.save(str(out_path), waveform, sr)
 
     return state.model_copy(update={"working_path": out_path, "is_16bit": True})

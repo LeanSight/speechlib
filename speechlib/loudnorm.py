@@ -33,5 +33,5 @@ def loudnorm(state: AudioState) -> AudioState:
 
     normalized = waveform * gain_linear
 
-    torchaudio.save(str(state.working_path), normalized, sr, bits_per_sample=16)
+    torchaudio.save(str(state.working_path), normalized, sr)
     return state.model_copy(update={"is_normalized": True})
