@@ -10,6 +10,23 @@ logger = logging.getLogger(__name__)
 # Importar compat ANTES de cualquier modulo que use torchaudio (pyannote, etc.)
 from . import compat  # noqa: F401  side-effect: patches torchaudio
 
+# --- Politica de runtime warnings (ver devdocs/IMPROVE-runtime-warnings.md) ---
+# Supresion de warnings ruidosos de las deps, aplicada una vez al importar el
+# pipeline. Cada filtro se limita por mensaje/categoria; no se silencia ninguna
+# categoria de forma amplia.
+import warnings
+
+# #4 StatsPool: pyannote computa std(dim=-1, correction=1) sobre segmentos de 1
+# frame durante la diarizacion interna -> ATen avisa "degrees of freedom <= 0" y
+# devuelve NaN. speechlib no controla esa llamada (es interna a pyannote); el
+# path de embedding propio ya esta guardado por MIN_SEGMENT_DURATION_S. Solo
+# silenciamos el ruido.
+warnings.filterwarnings(
+    "ignore",
+    message=r"std\(\): degrees of freedom is <= 0",
+    category=UserWarning,
+)
+
 from .wav_segmenter import wav_file_segmentation
 from .transcribe import transcribe_full_aligned
 from .step_timer import measure, print_report
