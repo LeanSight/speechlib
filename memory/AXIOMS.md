@@ -1,6 +1,5 @@
 # AXIOMAS DEL PROYECTO
-Última destilación: 2026-04-29 (sesión: isolation score + diagnóstico clips CCS TI + identificación Ricardo/Rita)
-Branch: refactor/speaker-domain
+Última destilación: 2026-06-09 (sesión: [build-system] faltante → uv no instala el self-package)
 
 ## Axiomas del dominio
 
@@ -61,3 +60,28 @@ Branch: refactor/speaker-domain
 - [RESTRICCIÓN: RTX 2070 Super Max-Q procesa 35 min a ~134s] → [DECISIÓN: transcripción local viable; no hace falta cloud ASR para audios <1h en es-CL]
 - [AXIOMA: Type A contamination = frontera de speaker] → [DECISIÓN: min_isolation_ms=1000 en pipeline]
 - [AXIOMA: Type B contamination = cluster espurio, isolation no resuelve] → [RESTRICCIÓN: clusters espurios son irrecuperables, descartar]
+
+## Packaging del self-package (destilación 2026-06-09)
+
+Fuente: `devdocs/lessons_learned_2026-06-09.md`. El consumidor downstream
+(`biz_long_term_memory` transcribe-session) fallaba con
+`<venv>\python.exe: No module named speechlib` aunque el venv tenía las 257 deps.
+
+### Axiomas del dominio (nuevos)
+- Sin tabla `[build-system]` en `pyproject.toml`, uv reciente trata el proyecto como **"virtual"**: resuelve e instala las *dependencias* pero NO construye ni instala el **self-package**. Síntoma: `site-packages` tiene torch/faster-whisper/etc. pero no `speechlib`, y `import speechlib` → `ModuleNotFoundError`. Verificado: agregar `[build-system]` cambió `uv sync` de "Checked 128, installed nothing" a "Built speechlib, + speechlib==1.1.16", 2026-06-09.
+- El fallo es **silencioso en sync time**: `uv sync` sale 0 e imprime "Resolved/Checked" tranquilizador mientras deja el proyecto no importable. El único signal es `ImportError` en runtime. Verificado 2026-06-09.
+- `[tool.setuptools.packages.find]` es **inerte sin `[build-system]`**: configura un backend que solo se usa si `[build-system]` lo declara. Configuración sin declaración no instala nada. Verificado 2026-06-09.
+- `git log -S 'build-system' -- pyproject.toml` no devuelve nada: la tabla **nunca existió**. El paquete importaba antes porque un provisioning viejo (mamba, o un uv más antiguo) lo había dejado en el venv; un `uv sync` limpio con uv actual lo dropea. Es una regresión latente expuesta al re-provisionar, no una línea removida. Verificado 2026-06-09. (Mismo patrón que [AXIOMA rapidfuzz faltante] del consumidor: el venv viejo tenía cosas que el clean sync no reproduce.)
+
+### Decisiones activas (nuevas)
+| Decisión | Por qué irreducible | Invalida si |
+|---|---|---|
+| Declarar `[build-system]` con `setuptools.build_meta` en `pyproject.toml` | Sin él uv no construye/instala el self-package y `import speechlib` falla; ya había `[tool.setuptools.packages.find]` esperando ese backend | speechlib migra a otro backend (hatchling, pdm) o se publica como wheel en un índice |
+
+### Anti-patrones confirmados (nuevos)
+- **Tener `[tool.setuptools.*]` sin `[build-system]`** → config de backend inerte; uv instala deps pero no el self-package; `import` revienta en runtime con exit 0 en sync. Alternativa: declarar `[build-system]` con `setuptools.build_meta`. Incident 2026-06-09.
+- **Confiar en que `uv sync` exit 0 significa proyecto utilizable** → puede dejar el self-package sin instalar y reportar "Checked N, installed nothing". Alternativa: validar `import <package>` (o un smoke `python -c`) tras un provisioning limpio. Incident 2026-06-09.
+
+### Dependencias (nuevas)
+- [AXIOMA: sin [build-system] uv no instala el self-package] → [DECISIÓN: declarar [build-system] setuptools.build_meta]
+- [AXIOMA: el fallo es silencioso en sync time] → [DECISIÓN: smoke `import speechlib` tras re-provisionar el venv]
