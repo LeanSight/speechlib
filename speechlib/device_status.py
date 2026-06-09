@@ -8,4 +8,7 @@ el texto, asi es testeable sin GPU ni mocks.
 
 def cuda_unavailable_warning() -> str:
     """Advertencia cuando CUDA no esta disponible (CPU mode)."""
-    return "WARN: CUDA no disponible — CPU mode (lento). Activaste mamba?"
+    return (
+        "WARN: CUDA no disponible — CPU mode (lento). "
+        "Ejecuta `torch-backend` en la raiz del repo y luego `uv sync` para wheels GPU."
+    )
