@@ -259,7 +259,7 @@ SP05_a_Orlando  <-> SP05_c_Mixed     d=0.299  ⚠️ Orlando + clip mixto
 
 ### community-1 validado sobre Alicanto
 
-Tras descubrir que el run anterior de community-1 (>1h 54min) era por NO tener torch+CUDA activo (entorno equivocado), re-corrida en entorno conda `speechlib` con GPU activa:
+Tras descubrir que el run anterior de community-1 (>1h 54min) era por NO tener torch+CUDA activo (wheels GPU ausentes en `.venv`), re-corrida con torch+CUDA instalado vía `torch-backend` + `uv sync`:
 
 - **14.8 minutos** total para 3.25h de audio (vs >2h hung)
 - 6 clusters detectados (vs 8 con 3.1)
