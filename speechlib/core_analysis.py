@@ -20,7 +20,16 @@ def _configure_runtime_warnings() -> None:
 
     Ver devdocs/IMPROVE-runtime-warnings.md.
     """
+    import logging as _logging
     import warnings
+
+    # #1 triton: torch.utils.flop_counter loguea "triton not found; flop counting
+    # will not work for triton kernels" via logging.Logger.warning (NO
+    # warnings.warn) cuando torch trae CUDA pero triton no esta instalado. Triton
+    # no tiene wheel oficial de Windows; su ausencia es legitima y el FLOP counter
+    # no se usa. Como es un logging warning, se silencia subiendo el nivel del
+    # logger especifico (filterwarnings no aplica aqui).
+    _logging.getLogger("torch.utils.flop_counter").setLevel(_logging.ERROR)
 
     # #4 StatsPool: pyannote computa std(dim=-1, correction=1) sobre segmentos de
     # 1 frame durante la diarizacion interna -> ATen avisa "degrees of freedom

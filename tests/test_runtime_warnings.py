@@ -83,3 +83,21 @@ def test_torchaudio_save_emits_no_bits_per_sample_warning(tmp_path):
 
     with wave.open(str(result.working_path), "rb") as wf:
         assert wf.getsampwidth() == 2, "la salida debe seguir siendo PCM 16-bit"
+
+
+def test_triton_flop_counter_log_warning_is_silenced():
+    """#1 triton: el logger de torch.utils.flop_counter no debe loguear WARNING.
+
+    Es un logging.Logger.warning (NO warnings.warn), asi que filterwarnings no
+    lo silencia: hay que subir el nivel del logger. Triton no tiene wheel oficial
+    de Windows; su ausencia es legitima y el FLOP counter no se usa.
+    """
+    import logging
+    from speechlib.core_analysis import _configure_runtime_warnings
+
+    _configure_runtime_warnings()
+
+    logger = logging.getLogger("torch.utils.flop_counter")
+    assert logger.getEffectiveLevel() >= logging.ERROR, (
+        "el logger torch.utils.flop_counter deberia estar en nivel >= ERROR"
+    )
