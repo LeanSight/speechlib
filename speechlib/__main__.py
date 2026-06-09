@@ -91,6 +91,42 @@ def _parse_hotwords(value: Optional[str]) -> list[str] | None:
     return [s.strip() for s in value.split(",")]
 
 
+def _transcribe_one(
+    file: Path,
+    voices_folder: Optional[Path],
+    log_folder: Optional[Path],
+    language: str,
+    model: str,
+    resolved_token: str,
+    output_format: "OutputFormat",
+    skip_enhance: bool,
+    compress: bool,
+    quantization: bool,
+    grouping: "Grouping",
+    speakers: Optional[str],
+    initial_prompt: Optional[str],
+    hotwords: Optional[str],
+) -> None:
+    """Single full-pipeline pass over one file (shared by `run` and `batch`)."""
+    core_analysis(
+        file_name=str(file),
+        voices_folder=str(voices_folder) if voices_folder else None,
+        log_folder=str(log_folder) if log_folder else None,
+        language=language,
+        modelSize=model,
+        ACCESS_TOKEN=resolved_token,
+        model_type="faster-whisper",
+        quantization=quantization,
+        output_format=output_format.value,
+        skip_enhance=skip_enhance,
+        compress=compress,
+        grouping_mode=grouping.value,
+        allowed_speakers=_parse_speakers(speakers),
+        initial_prompt=initial_prompt,
+        hotwords=_parse_hotwords(hotwords),
+    )
+
+
 @app.callback()
 def callback():
     """Speechlib: transcribe audio with speaker diarization and recognition."""
@@ -129,22 +165,10 @@ def run(
     _setup_logging(verbose)
     resolved_token = _resolve_token(token)
 
-    core_analysis(
-        file_name=str(file),
-        voices_folder=str(voices_folder) if voices_folder else None,
-        log_folder=str(log_folder) if log_folder else None,
-        language=language,
-        modelSize=model,
-        ACCESS_TOKEN=resolved_token,
-        model_type="faster-whisper",
-        quantization=quantization,
-        output_format=output_format.value,
-        skip_enhance=skip_enhance,
-        compress=compress,
-        grouping_mode=grouping.value,
-        allowed_speakers=_parse_speakers(speakers),
-        initial_prompt=initial_prompt,
-        hotwords=_parse_hotwords(hotwords),
+    _transcribe_one(
+        file, voices_folder, log_folder, language, model, resolved_token,
+        output_format, skip_enhance, compress, quantization, grouping,
+        speakers, initial_prompt, hotwords,
     )
 
 
