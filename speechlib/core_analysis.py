@@ -54,6 +54,7 @@ from .segment_merger import (
 
 from pathlib import Path
 from .audio_state import AudioState
+from .device_status import cuda_unavailable_warning
 from .re_encode import re_encode
 from .convert_to_mono import convert_to_mono
 from .convert_to_wav import convert_to_wav
@@ -572,7 +573,7 @@ def core_analysis(
     console = Console()
 
     if not torch.cuda.is_available():
-        console.print("[yellow]WARN: CUDA no disponible — CPU mode (lento). Activaste mamba?[/]")
+        console.print(f"[yellow]{cuda_unavailable_warning()}[/]")
 
     device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
     console.print(f"[dim]speechlib | {device} | {Path(file_name).name}[/]")
