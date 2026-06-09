@@ -173,6 +173,52 @@ def run(
 
 
 @app.command()
+def batch(
+    files: Annotated[list[Path], typer.Argument(
+        exists=True, file_okay=True, dir_okay=False, readable=True,
+        help="Audio files to transcribe (one process warms whisper+pyannote once)",
+    )],
+    voices_folder: _voices_opt = None,
+    log_folder: Annotated[Optional[Path], typer.Option(
+        help="Output folder (default: <file_dir>/output)",
+    )] = None,
+    language: Annotated[str, typer.Option(help="Language code")] = "es",
+    model: Annotated[str, typer.Option(help="Whisper model size")] = "large-v3-turbo",
+    token: Annotated[Optional[str], typer.Option(
+        envvar="HF_TOKEN", help="HuggingFace token",
+    )] = None,
+    output_format: Annotated[OutputFormat, typer.Option(
+        help="Output format",
+    )] = OutputFormat.vtt,
+    skip_enhance: Annotated[bool, typer.Option(help="Skip enhancement on output")] = False,
+    compress: Annotated[bool, typer.Option(help="Generate compressed _limpio.m4a")] = False,
+    quantization: Annotated[bool, typer.Option(help="Use int8 quantization")] = False,
+    grouping: Annotated[Grouping, typer.Option(help="Grouping mode")] = Grouping.sentences,
+    speakers: _speakers_opt = None,
+    initial_prompt: Annotated[Optional[str], typer.Option(
+        help="Context text biasing Whisper decoding (domain terms, names, jargon)",
+    )] = None,
+    hotwords: Annotated[Optional[str], typer.Option(
+        help="Comma-separated terms (or '@<path>' to read one-per-line from file) "
+             "injected as logit bias (alternative to --initial-prompt)",
+    )] = None,
+    verbose: _verbose_opt = False,
+):
+    """Transcribe many files in ONE process: whisper+pyannote load once (via the
+    in-process model cache) and every file gets the same per-file contract as
+    `run` (a <stem>_limpio.vtt beside each input). No daemon, no IPC."""
+    _setup_logging(verbose)
+    resolved_token = _resolve_token(token)
+
+    for f in files:
+        _transcribe_one(
+            f, voices_folder, log_folder, language, model, resolved_token,
+            output_format, skip_enhance, compress, quantization, grouping,
+            speakers, initial_prompt, hotwords,
+        )
+
+
+@app.command()
 def recognize(
     file: _file_arg,
     voices_folder: _voices_opt = None,
